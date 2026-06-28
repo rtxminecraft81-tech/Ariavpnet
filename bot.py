@@ -11,11 +11,11 @@ app = Flask(__name__)
 
 @app.route('/')
 def home():
-    return "👑 Aria VPN Bot is running!", 200
+    return "🏛️ Aria VPN Bot is running!", 200
 
 TOKEN = os.environ.get('BOT_TOKEN')
 if not TOKEN:
-    raise ValueError("👑 توکن یافت نشد! لطفاً BOT_TOKEN را در Render تنظیم کنید.")
+    raise ValueError("🏛️ توکن یافت نشد! لطفاً BOT_TOKEN را در Render تنظیم کنید.")
 
 ADMIN_ID = '6795169616'
 CHANNEL_USERNAME = '@AriaVPN_Channel'
@@ -119,7 +119,7 @@ def eco_menu():
 def start(message):
     user_id = message.from_user.id
     if is_banned(user_id):
-        bot.reply_to(message, "⛔ شما توسط ادمین مسدود شده اید!\n🆔 @hegzosupport")
+        bot.reply_to(message, "⛔ شما توسط ادمین مسدود شده اید!\n🆔 @Ariavpnetsupport")
         return
     name = message.from_user.first_name
     init_user(user_id, message.from_user.username or "")
@@ -137,7 +137,8 @@ def start(message):
     if not is_member(user_id):
         markup = types.InlineKeyboardMarkup()
         markup.add(types.InlineKeyboardButton("🔗 عضویت در کانال", url="https://t.me/AriaVPN_Channel"))
-        bot.reply_to(message, f"🦁 {name} عزیز!\n\nبرای ورود به پادشاهی اینترنت، ابتدا در کانال رسمی آریا وی‌پی‌ان عضو شوید.", reply_markup=markup)
+        markup.add(types.InlineKeyboardButton("✅ تایید عضویت", callback_data="check_membership"))
+        bot.reply_to(message, f"🏛️ {name} عزیز!\n\nبرای ورود به پادشاهی اینترنت، ابتدا در کانال رسمی آریا وی‌پی‌ان عضو شوید، سپس دکمه‌ی «تایید عضویت» را بزنید.", reply_markup=markup)
         return
     bot.reply_to(message, f"""🏛️ به پادشاهی اینترنت خوش آمدی {name}!
 
@@ -150,7 +151,27 @@ def start(message):
 
 🇮🇷 به سبک آریایی‌ها وصل شو.
 
-🆔 پشتیبانی: @hegzosupport""", reply_markup=main_keyboard())
+🆔 پشتیبانی: @Ariavpnetsupport""", reply_markup=main_keyboard())
+
+@bot.callback_query_handler(func=lambda call: call.data == "check_membership")
+def check_membership(call):
+    user_id = call.from_user.id
+    if is_member(user_id):
+        bot.edit_message_text("✅ عضویت شما تأیید شد! به پادشاهی اینترنت خوش آمدید.", call.message.chat.id, call.message.message_id)
+        bot.send_message(user_id, f"""🏛️ به پادشاهی اینترنت خوش آمدی!
+
+👑 آریا وی‌پی‌ان، سرویس اختصاصی کانفیگ و VPN با سرعت بالا، امنیت کامل و بدون محدودیت.
+
+✅ اینترنت آزاد و بدون فیلتر
+✅ سرعت بالا و پایدار
+✅ پشتیبانی ۲۴ ساعته
+✅ قیمت مناسب و رقابتی
+
+🇮🇷 به سبک آریایی‌ها وصل شو.
+
+🆔 پشتیبانی: @Ariavpnetsupport""", reply_markup=main_keyboard())
+    else:
+        bot.answer_callback_query(call.id, "❌ شما هنوز در کانال عضو نشده‌اید! لطفاً ابتدا عضو شوید.", show_alert=True)
 
 @bot.message_handler(func=lambda m: m.text == "🏠 صفحه اصلی")
 def back_home(m):
@@ -182,7 +203,7 @@ def invite(m):
 @bot.message_handler(commands=['support'])
 @bot.message_handler(func=lambda m: m.text == "🆘 پشتیبانی")
 def support(m):
-    bot.reply_to(m, "🏛️ **پشتیبانی سلطنتی آریا وی‌پی‌ان**\n\n@hegzosupport\n\n۲۴ ساعته پاسخگوی شما هستیم.", parse_mode='Markdown')
+    bot.reply_to(m, "🏛️ **پشتیبانی سلطنتی آریا وی‌پی‌ان**\n\n@Ariavpnetsupport\n\n۲۴ ساعته پاسخگوی شما هستیم.", parse_mode='Markdown')
 
 @bot.message_handler(commands=['charge'])
 @bot.message_handler(func=lambda m: m.text == "💳 شارژ کیف پول")
@@ -206,7 +227,7 @@ def charge(m):
 • پس از واریز، حتما رسید را بفرستید
 • کد پیگیری رسید را برای پیگیری نگهداری کنید
 
-🆔 پشتیبانی: @hegzosupport
+🆔 پشتیبانی: @Ariavpnetsupport
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 📝 لطفا مبلغ مورد نظر را وارد کنید (به تومان):"""
@@ -287,7 +308,7 @@ def show_config_detail(call):
 💡 **نحوه استفاده:**
 روی لینک بالا فشار طولانی بدید و Copy رو بزنید، سپس در برنامه V2rayNG یا NPV Tunnel وارد کنید.
 ━━━━━━━━━━━━━━━━━━━━━
-🆔 پشتیبانی: @hegzosupport"""
+🆔 پشتیبانی: @Ariavpnetsupport"""
     
     markup = types.InlineKeyboardMarkup()
     markup.add(types.InlineKeyboardButton("🔙 بازگشت به لیست", callback_data="back_to_configs"))
@@ -388,7 +409,7 @@ def confirm(call):
     package = parts[2]
     price = int(parts[3])
     
-    bot.send_message(user_id, f"✅ **کانفیگ {package} تایید شد!**\n\n🆔 پشتیبانی: @hegzosupport", parse_mode='Markdown')
+    bot.send_message(user_id, f"✅ **کانفیگ {package} تایید شد!**\n\n🆔 پشتیبانی: @Ariavpnetsupport", parse_mode='Markdown')
     bot.answer_callback_query(call.id, "✅ تایید شد")
     try:
         bot.edit_message_caption(f"✅ تایید شد - {package}", call.message.chat.id, call.message.message_id)
@@ -403,7 +424,7 @@ def reject(call):
     
     user_id = int(call.data.split("_")[1])
     
-    bot.send_message(user_id, "❌ **درخواست شما رد شد!**\n\n📱 با پشتیبانی تماس بگیرید: @hegzosupport", parse_mode='Markdown')
+    bot.send_message(user_id, "❌ **درخواست شما رد شد!**\n\n📱 با پشتیبانی تماس بگیرید: @Ariavpnetsupport", parse_mode='Markdown')
     bot.answer_callback_query(call.id, "❌ رد شد")
     try:
         bot.edit_message_caption("❌ رد شد", call.message.chat.id, call.message.message_id)
@@ -430,7 +451,7 @@ def send_config(m, user_id, package, price):
     if str(user_id) in users:
         users[str(user_id)].setdefault('active_configs', []).append({'package': package, 'config': config, 'date': str(datetime.now()), 'price': price})
         save_users(users)
-    bot.send_message(user_id, f"🎁 **کانفیگ اختصاصی شما ({package})**\n\n`{config}`\n\n🆔 پشتیبانی: @hegzosupport", parse_mode='Markdown')
+    bot.send_message(user_id, f"🎁 **کانفیگ اختصاصی شما ({package})**\n\n`{config}`\n\n🆔 پشتیبانی: @Ariavpnetsupport", parse_mode='Markdown')
     bot.reply_to(m, "✅ کانفیگ با موفقیت ارسال شد")
 
 @bot.callback_query_handler(func=lambda call: call.data.startswith("ch_ok_"))
@@ -462,7 +483,7 @@ def ch_no(call):
     user_id = int(call.data.split("_")[2])
     
     if str(user_id) in users:
-        bot.send_message(user_id, "❌ **درخواست شارژ رد شد!**\n\n📱 با پشتیبانی تماس بگیرید: @hegzosupport", parse_mode='Markdown')
+        bot.send_message(user_id, "❌ **درخواست شارژ رد شد!**\n\n📱 با پشتیبانی تماس بگیرید: @Ariavpnetsupport", parse_mode='Markdown')
     bot.answer_callback_query(call.id, "❌ رد شد")
     try:
         bot.edit_message_caption("❌ رد شد", call.message.chat.id, call.message.message_id)
@@ -515,7 +536,7 @@ def ban_user(m):
         banned_users.add(str(user_id))
         save_banned_users()
         try:
-            bot.send_message(user_id, "⛔ شما توسط ادمین مسدود شده اید!\n🆔 @hegzosupport")
+            bot.send_message(user_id, "⛔ شما توسط ادمین مسدود شده اید!\n🆔 @Ariavpnetsupport")
         except:
             pass
         bot.reply_to(m, f"✅ کاربر {user_id} مسدود شد.")
@@ -559,7 +580,7 @@ def unknown(m):
 
 if __name__ == '__main__':
     PORT = int(os.environ.get('PORT', 10000))
-    print(f"👑 آریا وی‌پی‌ان روی پورت {PORT} روشن شد!")
+    print(f"🏛️ آریا وی‌پی‌ان روی پورت {PORT} روشن شد!")
     print("✅ بسته‌های شاهنشاهی: 25-50-100-200 گیگ")
     
     try:
