@@ -295,29 +295,15 @@ def show_config_detail(call):
     date = cfg.get('date', 'نامشخص')
     price = cfg.get('price', 'نامشخص')
     
-    text = f"""📜 **جزئیات کانفیگ {idx+1}**
-
-━━━━━━━━━━━━━━━━━━━━━
-📌 **بسته:** {package}
-💰 **مبلغ:** {price:,} تومان
-📅 **تاریخ دریافت:** {date}
-━━━━━━━━━━━━━━━━━━━━━
-🔗 **لینک کانفیگ:**
-`{config}`
-━━━━━━━━━━━━━━━━━━━━━
-💡 **نحوه استفاده:**
-روی لینک بالا فشار طولانی بدید و Copy رو بزنید، سپس در برنامه V2rayNG یا NPV Tunnel وارد کنید.
-━━━━━━━━━━━━━━━━━━━━━
-🆔 پشتیبانی: @Ariavpnetsupport"""
+    # ارسال کانفیگ به صورت فایل
+    file_name = f"config_{user_id}_{package}.txt"
+    with open(file_name, 'w') as f:
+        f.write(config)
     
-    markup = types.InlineKeyboardMarkup()
-    markup.add(types.InlineKeyboardButton("🔙 بازگشت به لیست", callback_data="back_to_configs"))
-    markup.add(types.InlineKeyboardButton("🏠 صفحه اصلی", callback_data="back_main"))
+    with open(file_name, 'rb') as f:
+        bot.send_document(user_id, f, caption=f"📜 **کانفیگ {package}**\n\n💰 مبلغ: {price:,} تومان\n📅 تاریخ: {date}\n\n🆔 پشتیبانی: @Ariavpnetsupport")
     
-    try:
-        bot.edit_message_text(text, call.message.chat.id, call.message.message_id, reply_markup=markup, parse_mode='Markdown')
-    except:
-        bot.send_message(call.message.chat.id, text, reply_markup=markup, parse_mode='Markdown')
+    os.remove(file_name)
     bot.answer_callback_query(call.id)
 
 @bot.callback_query_handler(func=lambda call: call.data == "back_to_configs")
@@ -451,7 +437,15 @@ def send_config(m, user_id, package, price):
     if str(user_id) in users:
         users[str(user_id)].setdefault('active_configs', []).append({'package': package, 'config': config, 'date': str(datetime.now()), 'price': price})
         save_users(users)
-    bot.send_message(user_id, f"🎁 **کانفیگ اختصاصی شما ({package})**\n\n`{config}`\n\n🆔 پشتیبانی: @Ariavpnetsupport", parse_mode='Markdown')
+    
+    file_name = f"config_{user_id}_{package}.txt"
+    with open(file_name, 'w') as f:
+        f.write(config)
+    
+    with open(file_name, 'rb') as f:
+        bot.send_document(user_id, f, caption=f"🎁 **کانفیگ اختصاصی شما ({package})**\n\n🆔 پشتیبانی: @Ariavpnetsupport")
+    
+    os.remove(file_name)
     bot.reply_to(m, "✅ کانفیگ با موفقیت ارسال شد")
 
 @bot.callback_query_handler(func=lambda call: call.data.startswith("ch_ok_"))
