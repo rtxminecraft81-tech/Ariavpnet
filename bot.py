@@ -76,9 +76,9 @@ def is_member(user_id):
 
 def main_keyboard():
     markup = types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
-    markup.add("👑 خرید کانفیگ", "💳 شارژ کیف پول")
-    markup.add("📁 کانفیگ‌های من", "👤 حساب کاربری")
-    markup.add("👥 دعوت سلطنتی", "🆘 پشتیبانی")
+    markup.add("🏛️ خرید کانفیگ", "💳 شارژ کیف پول")
+    markup.add("📜 کانفیگ‌های من", "👤 حساب من")
+    markup.add("🤝 دعوت سلطنتی", "🆘 پشتیبانی")
     markup.add("🏠 صفحه اصلی")
     return markup
 
@@ -101,20 +101,21 @@ def admin_charge_buttons(user_id, amount):
 
 def buy_menu():
     markup = types.InlineKeyboardMarkup(row_width=1)
-    markup.add(types.InlineKeyboardButton("👑 اقتصادی", callback_data="lev_eco"))
+    markup.add(types.InlineKeyboardButton("🏛️ بسته‌های شاهنشاهی", callback_data="lev_eco"))
+    markup.add(types.InlineKeyboardButton("🗿 بسته‌های آریایی (به زودی)", callback_data="lev_aria"))
     markup.add(types.InlineKeyboardButton("🏠 صفحه اصلی", callback_data="back_main"))
     return markup
 
 def eco_menu():
     markup = types.InlineKeyboardMarkup(row_width=1)
-    markup.add(types.InlineKeyboardButton("25 گیگ - 180,000 تومان", callback_data="b_eco25_180000"))
-    markup.add(types.InlineKeyboardButton("50 گیگ - 250,000 تومان", callback_data="b_eco50_250000"))
-    markup.add(types.InlineKeyboardButton("100 گیگ - 450,000 تومان", callback_data="b_eco100_450000"))
-    markup.add(types.InlineKeyboardButton("200 گیگ - 800,000 تومان", callback_data="b_eco200_800000"))
+    markup.add(types.InlineKeyboardButton("⚜️ 25 گیگ - 180,000 تومان", callback_data="b_eco25_180000"))
+    markup.add(types.InlineKeyboardButton("⚜️ 50 گیگ - 250,000 تومان", callback_data="b_eco50_250000"))
+    markup.add(types.InlineKeyboardButton("⚜️ 100 گیگ - 450,000 تومان", callback_data="b_eco100_450000"))
+    markup.add(types.InlineKeyboardButton("⚜️ 200 گیگ - 800,000 تومان", callback_data="b_eco200_800000"))
     markup.add(types.InlineKeyboardButton("🔙 بازگشت", callback_data="back_buy"))
     return markup
 
-@bot.message_handler(commands=['start'])
+@bot.message_handler(commands=['start', 'help'])
 def start(message):
     user_id = message.from_user.id
     if is_banned(user_id):
@@ -138,9 +139,9 @@ def start(message):
         markup.add(types.InlineKeyboardButton("🔗 عضویت در کانال", url="https://t.me/AriaVPN_Channel"))
         bot.reply_to(message, f"🦁 {name} عزیز!\n\nبرای ورود به پادشاهی اینترنت، ابتدا در کانال رسمی آریا وی‌پی‌ان عضو شوید.", reply_markup=markup)
         return
-    bot.reply_to(message, f"""👑 به پادشاهی اینترنت خوش آمدی {name}!
+    bot.reply_to(message, f"""🏛️ به پادشاهی اینترنت خوش آمدی {name}!
 
-🦁 آریا وی‌پی‌ان، سرویس اختصاصی کانفیگ و VPN با سرعت بالا، امنیت کامل و بدون محدودیت.
+👑 آریا وی‌پی‌ان، سرویس اختصاصی کانفیگ و VPN با سرعت بالا، امنیت کامل و بدون محدودیت.
 
 ✅ اینترنت آزاد و بدون فیلتر
 ✅ سرعت بالا و پایدار
@@ -153,13 +154,15 @@ def start(message):
 
 @bot.message_handler(func=lambda m: m.text == "🏠 صفحه اصلی")
 def back_home(m):
-    bot.reply_to(m, "👑 صفحه اصلی آریا وی‌پی‌ان:", reply_markup=main_keyboard())
+    bot.reply_to(m, "🏛️ صفحه اصلی آریا وی‌پی‌ان:", reply_markup=main_keyboard())
 
-@bot.message_handler(func=lambda m: m.text == "👑 خرید کانفیگ")
+@bot.message_handler(commands=['buy'])
+@bot.message_handler(func=lambda m: m.text == "🏛️ خرید کانفیگ")
 def show_buy(m):
-    bot.reply_to(m, "👑 انتخاب بسته سلطنتی:", reply_markup=buy_menu())
+    bot.reply_to(m, "🏛️ انتخاب بسته شاهنشاهی:", reply_markup=buy_menu())
 
-@bot.message_handler(func=lambda m: m.text == "👤 حساب کاربری")
+@bot.message_handler(commands=['profile'])
+@bot.message_handler(func=lambda m: m.text == "👤 حساب من")
 def profile(m):
     user_id = m.from_user.id
     data = users.get(str(user_id), {})
@@ -167,7 +170,8 @@ def profile(m):
     text = f"👑 **حساب سلطنتی من**\n\n━━━━━━━━━━━━━━━━━━━━━\n🆔 شناسه: `{user_id}`\n👤 نام: {m.from_user.first_name}\n📊 کانفیگ فعال: {active_count}\n👥 زیرمجموعه: {data.get('referrals', 0)}\n💰 اعتبار کیف پول: {data.get('credit', 0):,} تومان\n━━━━━━━━━━━━━━━━━━━━━\n🇮🇷 به سبک آریایی‌ها وصل شو."
     bot.reply_to(m, text, parse_mode='Markdown')
 
-@bot.message_handler(func=lambda m: m.text == "👥 دعوت سلطنتی")
+@bot.message_handler(commands=['referral'])
+@bot.message_handler(func=lambda m: m.text == "🤝 دعوت سلطنتی")
 def invite(m):
     user_id = m.from_user.id
     link = f"https://t.me/{bot.get_me().username}?start={user_id}"
@@ -175,10 +179,12 @@ def invite(m):
     text = f"👑 **لینک دعوت سلطنتی شما**\n\n`{link}`\n\n👥 دعوت‌ها: {data.get('referrals', 0)}\n\n💰 هر دعوت = {REFERRAL_AMOUNT:,} تومان اعتبار"
     bot.reply_to(m, text, parse_mode='Markdown')
 
+@bot.message_handler(commands=['support'])
 @bot.message_handler(func=lambda m: m.text == "🆘 پشتیبانی")
 def support(m):
-    bot.reply_to(m, "🦁 **پشتیبانی سلطنتی آریا وی‌پی‌ان**\n\n@hegzosupport\n\n۲۴ ساعته پاسخگوی شما هستیم.", parse_mode='Markdown')
+    bot.reply_to(m, "🏛️ **پشتیبانی سلطنتی آریا وی‌پی‌ان**\n\n@hegzosupport\n\n۲۴ ساعته پاسخگوی شما هستیم.", parse_mode='Markdown')
 
+@bot.message_handler(commands=['charge'])
 @bot.message_handler(func=lambda m: m.text == "💳 شارژ کیف پول")
 def charge(m):
     text = f"""👑 **شارژ کیف پول سلطنتی**
@@ -235,12 +241,12 @@ def receipt(m):
     else:
         bot.reply_to(m, "❌ ابتدا از منوی اصلی روی 💳 شارژ کیف پول کلیک کن و مبلغ را وارد کن.")
 
-@bot.message_handler(func=lambda m: m.text == "📁 کانفیگ‌های من")
+@bot.message_handler(func=lambda m: m.text == "📜 کانفیگ‌های من")
 def my_configs_list(m):
     user_id = m.from_user.id
     cfg_list = users.get(str(user_id), {}).get('active_configs', [])
     if not cfg_list:
-        bot.reply_to(m, "📭 **کانفیگ فعالی ندارید!**\n\nبرای خرید کانفیگ از بخش 👑 خرید کانفیگ اقدام کنید.", parse_mode='Markdown')
+        bot.reply_to(m, "📜 **کانفیگ فعالی ندارید!**\n\nبرای خرید کانفیگ از بخش 🏛️ خرید کانفیگ اقدام کنید.", parse_mode='Markdown')
         return
     
     markup = types.InlineKeyboardMarkup(row_width=1)
@@ -250,7 +256,7 @@ def my_configs_list(m):
         markup.add(types.InlineKeyboardButton(f"{i+1}. {package} ({date})", callback_data=f"showcfg_{i}"))
     markup.add(types.InlineKeyboardButton("🏠 صفحه اصلی", callback_data="back_main"))
     
-    bot.reply_to(m, "📦 **لیست کانفیگ‌های فعال شما**\n\nلطفا یکی از گزینه‌های زیر را انتخاب کنید:", reply_markup=markup, parse_mode='Markdown')
+    bot.reply_to(m, "📜 **لیست کانفیگ‌های فعال شما**\n\nلطفا یکی از گزینه‌های زیر را انتخاب کنید:", reply_markup=markup, parse_mode='Markdown')
 
 @bot.callback_query_handler(func=lambda call: call.data.startswith("showcfg_"))
 def show_config_detail(call):
@@ -268,7 +274,7 @@ def show_config_detail(call):
     date = cfg.get('date', 'نامشخص')
     price = cfg.get('price', 'نامشخص')
     
-    text = f"""📦 **جزئیات کانفیگ {idx+1}**
+    text = f"""📜 **جزئیات کانفیگ {idx+1}**
 
 ━━━━━━━━━━━━━━━━━━━━━
 📌 **بسته:** {package}
@@ -300,9 +306,9 @@ def back_to_configs(call):
     
     if not cfg_list:
         try:
-            bot.edit_message_text("📭 کانفیگ فعالی ندارید!", call.message.chat.id, call.message.message_id, parse_mode='Markdown')
+            bot.edit_message_text("📜 کانفیگ فعالی ندارید!", call.message.chat.id, call.message.message_id, parse_mode='Markdown')
         except:
-            bot.send_message(call.message.chat.id, "📭 کانفیگ فعالی ندارید!", parse_mode='Markdown')
+            bot.send_message(call.message.chat.id, "📜 کانفیگ فعالی ندارید!", parse_mode='Markdown')
         return
     
     markup = types.InlineKeyboardMarkup(row_width=1)
@@ -313,30 +319,34 @@ def back_to_configs(call):
     markup.add(types.InlineKeyboardButton("🏠 صفحه اصلی", callback_data="back_main"))
     
     try:
-        bot.edit_message_text("📦 **لیست کانفیگ‌های فعال شما**\n\nلطفا یکی از گزینه‌های زیر را انتخاب کنید:", call.message.chat.id, call.message.message_id, reply_markup=markup, parse_mode='Markdown')
+        bot.edit_message_text("📜 **لیست کانفیگ‌های فعال شما**\n\nلطفا یکی از گزینه‌های زیر را انتخاب کنید:", call.message.chat.id, call.message.message_id, reply_markup=markup, parse_mode='Markdown')
     except:
-        bot.send_message(call.message.chat.id, "📦 **لیست کانفیگ‌های فعال شما**\n\nلطفا یکی از گزینه‌های زیر را انتخاب کنید:", reply_markup=markup, parse_mode='Markdown')
+        bot.send_message(call.message.chat.id, "📜 **لیست کانفیگ‌های فعال شما**\n\nلطفا یکی از گزینه‌های زیر را انتخاب کنید:", reply_markup=markup, parse_mode='Markdown')
 
 @bot.callback_query_handler(func=lambda call: call.data == "lev_eco")
 def lev_eco(call):
     try:
-        bot.edit_message_text("👑 **بسته‌های اقتصادی آریا وی‌پی‌ان**\n\nلطفا یکی از بسته‌های سلطنتی زیر را انتخاب کنید:", call.message.chat.id, call.message.message_id, reply_markup=eco_menu(), parse_mode='Markdown')
+        bot.edit_message_text("🏛️ **بسته‌های شاهنشاهی آریا وی‌پی‌ان**\n\nلطفا یکی از بسته‌های سلطنتی زیر را انتخاب کنید:", call.message.chat.id, call.message.message_id, reply_markup=eco_menu(), parse_mode='Markdown')
     except:
-        bot.send_message(call.message.chat.id, "👑 **بسته‌های اقتصادی آریا وی‌پی‌ان**\n\nلطفا یکی از بسته‌های سلطنتی زیر را انتخاب کنید:", reply_markup=eco_menu(), parse_mode='Markdown')
+        bot.send_message(call.message.chat.id, "🏛️ **بسته‌های شاهنشاهی آریا وی‌پی‌ان**\n\nلطفا یکی از بسته‌های سلطنتی زیر را انتخاب کنید:", reply_markup=eco_menu(), parse_mode='Markdown')
+
+@bot.callback_query_handler(func=lambda call: call.data == "lev_aria")
+def lev_aria(call):
+    bot.answer_callback_query(call.id, "🗿 بسته‌های آریایی به زودی فعال خواهد شد!", show_alert=True)
 
 @bot.callback_query_handler(func=lambda call: call.data == "back_buy")
 def back_buy(call):
     try:
-        bot.edit_message_text("👑 انتخاب بسته سلطنتی:", call.message.chat.id, call.message.message_id, reply_markup=buy_menu())
+        bot.edit_message_text("🏛️ انتخاب بسته شاهنشاهی:", call.message.chat.id, call.message.message_id, reply_markup=buy_menu())
     except:
-        bot.send_message(call.message.chat.id, "👑 انتخاب بسته سلطنتی:", reply_markup=buy_menu())
+        bot.send_message(call.message.chat.id, "🏛️ انتخاب بسته شاهنشاهی:", reply_markup=buy_menu())
 
 @bot.callback_query_handler(func=lambda call: call.data == "back_main")
 def back_main(call):
     try:
-        bot.edit_message_text("👑 صفحه اصلی آریا وی‌پی‌ان:", call.message.chat.id, call.message.message_id, reply_markup=main_keyboard())
+        bot.edit_message_text("🏛️ صفحه اصلی آریا وی‌پی‌ان:", call.message.chat.id, call.message.message_id, reply_markup=main_keyboard())
     except:
-        bot.send_message(call.message.chat.id, "👑 صفحه اصلی آریا وی‌پی‌ان:", reply_markup=main_keyboard())
+        bot.send_message(call.message.chat.id, "🏛️ صفحه اصلی آریا وی‌پی‌ان:", reply_markup=main_keyboard())
 
 @bot.callback_query_handler(func=lambda call: call.data.startswith("b_"))
 def buy_cmd(call):
@@ -550,7 +560,7 @@ def unknown(m):
 if __name__ == '__main__':
     PORT = int(os.environ.get('PORT', 10000))
     print(f"👑 آریا وی‌پی‌ان روی پورت {PORT} روشن شد!")
-    print("✅ بسته‌های 25-50-100-200 گیگ با سرعت 4 مگابیت")
+    print("✅ بسته‌های شاهنشاهی: 25-50-100-200 گیگ")
     
     try:
         bot.delete_webhook()
