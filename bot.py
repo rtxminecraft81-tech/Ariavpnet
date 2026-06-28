@@ -295,7 +295,6 @@ def show_config_detail(call):
     date = cfg.get('date', 'نامشخص')
     price = cfg.get('price', 'نامشخص')
     
-    # ارسال کانفیگ به صورت فایل
     file_name = f"config_{user_id}_{package}.txt"
     with open(file_name, 'w') as f:
         f.write(config)
@@ -494,9 +493,14 @@ def list_users(m):
     
     count = len(users)
     text = f"👑 **تعداد کاربران آریا وی‌پی‌ان:** {count} نفر\n\n"
-    text += "🆔 **لیست آیدی‌ها:**\n"
-    for uid in users.keys():
-        text += f"• `{uid}`\n"
+    text += "👤 **لیست کاربران:**\n"
+    for uid, data in users.items():
+        username = data.get('username', '')
+        if username:
+            username = f"@{username}"
+        else:
+            username = 'بدون یوزرنیم'
+        text += f"• `{uid}` | {username}\n"
     
     bot.reply_to(m, text, parse_mode='Markdown')
 
