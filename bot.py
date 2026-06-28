@@ -491,9 +491,13 @@ def list_users(m):
     if not users:
         bot.reply_to(m, "📭 هیچ کاربری وجود ندارد.")
         return
-    text = "👑 **لیست کاربران آریا وی‌پی‌ان**\n\n"
-    for uid, data in users.items():
-        text += f"🆔 `{uid}` | اعتبار: {data.get('credit',0):,} | دعوت: {data.get('referrals',0)}\n"
+    
+    count = len(users)
+    text = f"👑 **تعداد کاربران آریا وی‌پی‌ان:** {count} نفر\n\n"
+    text += "🆔 **لیست آیدی‌ها:**\n"
+    for uid in users.keys():
+        text += f"• `{uid}`\n"
+    
     bot.reply_to(m, text, parse_mode='Markdown')
 
 @bot.message_handler(commands=['broadcast'])
