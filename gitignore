@@ -1,0 +1,6 @@
+.env
+__pycache__/
+downloads/
+users.json
+banned_users.json
+*.pyc
