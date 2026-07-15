@@ -7,7 +7,6 @@ from datetime import datetime
 from flask import Flask
 import threading
 import re
-import yt_dlp
 import requests
 
 app = Flask(__name__)
@@ -18,7 +17,7 @@ def home():
 
 TOKEN = os.environ.get('BOT_TOKEN')
 if not TOKEN:
-    raise ValueError("❌ توکن یافت نشد! لطفاً BOT_TOKEN را در Render تنظیم کنید.")
+    raise ValueError("❌ توکن یافت نشد!")
 
 ADMIN_ID = '6795169616'
 CHANNEL_USERNAME = '@hegzo_vpn_channle'
@@ -79,10 +78,87 @@ def main_keyboard():
     markup.add("🏠 صفحه اصلی")
     return markup
 
-# ========== تابع دانلود با yt-dlp (بدون لاگین) ==========
+# ========== تابع دانلود با API ==========
 def download_instagram(link):
-    """دانلود با yt-dlp - بدون نیاز به لاگین"""
+    """دانلود با استفاده از API رایگان (نیاز به کوکی نداره)"""
     try:
+        # استخراج shortcode از لینک
+        shortcode = None
+        if '/p/' in link:
+            shortcode = link.split('/p/')[1].split('/')[0]
+        elif '/reel/' in link:
+            shortcode = link.split('/reel/')[1].split('/')[0]
+        elif '/tv/' in link:
+            shortcode = link.split('/tv/')[1].split('/')[0]
+        else:
+            return None, "❌ لینک معتبر نیست!"
+        
+        if not shortcode:
+            return None, "❌ لینک معتبر نیست!"
+        
+        # استفاده از API اینستاگرام (بدون لاگین)
+        url = f"https://www.instagram.com/p/{shortcode}/?__a=1&__d=1"
+        
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+            'Accept-Language': 'en-US,en;q=0.5',
+            'Accept-Encoding': 'gzip, deflate, br',
+            'Connection': 'keep-alive',
+            'Upgrade-Insecure-Requests': '1',
+            'Sec-Fetch-Dest': 'document',
+            'Sec-Fetch-Mode': 'navigate',
+            'Sec-Fetch-Site': 'none',
+            'Sec-Fetch-User': '?1',
+            'Cache-Control': 'max-age=0',
+        }
+        
+        response = requests.get(url, headers=headers, timeout=15)
+        
+        if response.status_code == 200:
+            data = response.json()
+            
+            if 'graphql' in data and 'shortcode_media' in data['graphql']:
+                media = data['graphql']['shortcode_media']
+                
+                if not os.path.exists('downloads'):
+                    os.makedirs('downloads')
+                
+                # دانلود ویدیو
+                if media.get('is_video', False):
+                    video_url = media.get('video_url')
+                    if video_url:
+                        video_response = requests.get(video_url, stream=True, timeout=30)
+                        if video_response.status_code == 200:
+                            filename = f"downloads/instagram_{shortcode}.mp4"
+                            with open(filename, 'wb') as f:
+                                for chunk in video_response.iter_content(chunk_size=8192):
+                                    if chunk:
+                                        f.write(chunk)
+                            return filename, "✅ ویدیو دانلود شد!"
+                else:
+                    # دانلود عکس
+                    image_url = media.get('display_url')
+                    if image_url:
+                        image_response = requests.get(image_url, timeout=30)
+                        if image_response.status_code == 200:
+                            filename = f"downloads/instagram_{shortcode}.jpg"
+                            with open(filename, 'wb') as f:
+                                f.write(image_response.content)
+                            return filename, "✅ عکس دانلود شد!"
+        
+        # اگه روش بالا جواب نداد، از yt-dlp استفاده کن
+        return download_with_ytdlp(link)
+        
+    except Exception as e:
+        return None, f"❌ خطا: {str(e)[:100]}"
+
+# ========== روش جایگزین با yt-dlp ==========
+def download_with_ytdlp(link):
+    """روش دوم با yt-dlp"""
+    try:
+        import yt_dlp
+        
         if not os.path.exists('downloads'):
             os.makedirs('downloads')
         
@@ -92,13 +168,9 @@ def download_instagram(link):
             'no_warnings': True,
             'ignoreerrors': True,
             'no_check_certificate': True,
-            'cookiefile': None,
             'headers': {
                 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
-                'Accept-Language': 'en-US,en;q=0.5',
-                'Sec-Fetch-Mode': 'navigate',
-            }
+            },
         }
         
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
@@ -107,22 +179,11 @@ def download_instagram(link):
                 filename = ydl.prepare_filename(info)
                 if os.path.exists(filename):
                     return filename, "✅ دانلود انجام شد!"
-                
-                # اگه اسم فایل تغییر کرده بود
-                for f in os.listdir('downloads'):
-                    if info.get('id') and info['id'] in f:
-                        return os.path.join('downloads', f), "✅ دانلود انجام شد!"
         
-        return None, "❌ دانلود ناموفق! لینک رو بررسی کن."
+        return None, "❌ دانلود ناموفق! لطفاً لینک رو بررسی کن."
         
     except Exception as e:
-        error_msg = str(e)
-        if "Private" in error_msg:
-            return None, "❌ این پست خصوصی هست! فقط پست‌های عمومی قابل دانلود هستن."
-        elif "login" in error_msg.lower():
-            return None, "❌ این لینک نیاز به لاگین داره! لطفاً یه لینک عمومی بفرست."
-        else:
-            return None, f"❌ خطا: {error_msg[:100]}"
+        return None, f"❌ خطا: {str(e)[:100]}"
 
 # ========== دستورات ربات ==========
 @bot.message_handler(commands=['start', 'help'])
@@ -209,7 +270,7 @@ def handle_message(m):
     
     if match:
         link = match.group(1)
-        msg = bot.reply_to(m, "⏳ در حال دانلود... لطفاً صبر کن")
+        bot.reply_to(m, "⏳ در حال دانلود... لطفاً صبر کن")
         
         filename, result = download_instagram(link)
         
@@ -248,7 +309,6 @@ if __name__ == '__main__':
     if not os.path.exists('downloads'):
         os.makedirs('downloads')
     
-    # پاک کردن webhook قبل از شروع
     try:
         bot.remove_webhook()
         print("✅ Webhook پاک شد!")
