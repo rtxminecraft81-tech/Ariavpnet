@@ -6,9 +6,9 @@ import time
 from datetime import datetime
 from flask import Flask
 import threading
-import instaloader
 import re
 import requests
+import yt_dlp
 
 app = Flask(__name__)
 
@@ -20,8 +20,8 @@ TOKEN = os.environ.get('BOT_TOKEN')
 if not TOKEN:
     raise ValueError("❌ توکن یافت نشد! لطفاً BOT_TOKEN را در Render تنظیم کنید.")
 
-ADMIN_ID = '6795169616'  # آیدی ادمین رو همینجا بذار
-CHANNEL_USERNAME = '@hegzo_vpn_channle'  # کانال جدید
+ADMIN_ID = '6795169616'
+CHANNEL_USERNAME = '@hegzo_vpn_channle'
 
 bot = telebot.TeleBot(TOKEN)
 USER_DB = 'users.json'
@@ -63,6 +63,53 @@ def main_keyboard():
     markup.add("🆘 پشتیبانی")
     return markup
 
+# ========== تابع دانلود با yt-dlp ==========
+def download_instagram(link):
+    """دانلود محتوای اینستاگرام با yt-dlp (بدون نیاز به لاگین)"""
+    try:
+        # تنظیمات yt-dlp
+        ydl_opts = {
+            'outtmpl': 'downloads/instagram_%(id)s.%(ext)s',  # مسیر ذخیره
+            'quiet': True,
+            'no_warnings': True,
+            'extract_flat': False,
+            'ignoreerrors': True,
+            'no_check_certificate': True,
+            'cookiefile': None,  # بدون کوکی
+        }
+        
+        # ایجاد پوشه downloads اگر وجود نداشت
+        if not os.path.exists('downloads'):
+            os.makedirs('downloads')
+        
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            # استخراج اطلاعات
+            info = ydl.extract_info(link, download=True)
+            
+            if info and 'entries' in info:
+                # برای استوری یا چندتا فایل
+                for entry in info['entries']:
+                    if entry:
+                        filename = ydl.prepare_filename(entry)
+                        if os.path.exists(filename):
+                            return filename, "✅ دانلود با موفقیت انجام شد!"
+            else:
+                # برای پست یا ریلز تکی
+                filename = ydl.prepare_filename(info)
+                if os.path.exists(filename):
+                    return filename, "✅ دانلود با موفقیت انجام شد!"
+        
+        return None, "❌ فایل دانلود نشد! لینک رو بررسی کن."
+        
+    except Exception as e:
+        error_msg = str(e)
+        if "Private" in error_msg:
+            return None, "❌ این پست خصوصی هست! فقط پست‌های عمومی قابل دانلود هستن."
+        elif "login" in error_msg.lower():
+            return None, "❌ این لینک نیاز به لاگین داره! فقط لینک‌های عمومی رو می‌تونم دانلود کنم."
+        else:
+            return None, f"❌ خطا: {error_msg[:100]}"
+
 # ========== دستور استارت ==========
 @bot.message_handler(commands=['start', 'help'])
 def start(message):
@@ -86,9 +133,9 @@ def start(message):
 
 📥 لینک پست، ریلز یا استوری اینستاگرام رو برام بفرست تا دانلودش کنم.
 
-🔹 **پشتیبانی:** ریلز، پست، استوری هایلایت
+🔹 **پشتیبانی:** ریلز، پست، استوری
 🔹 **سرعت بالا و رایگان**
-🔹 **بدون محدودیت حجم**
+🔹 **بدون نیاز به لاگین**
 
 📌 فقط کافیه لینک رو برام بفرستی!
 """,
@@ -116,7 +163,7 @@ def check_membership(call):
 @bot.message_handler(func=lambda m: m.text == "📥 دانلود از اینستاگرام")
 def download_btn(message):
     bot.reply_to(message,
-        "📥 **لینک اینستاگرام رو برام بفرست**\n\nمثال:\n`https://www.instagram.com/p/ABC123/`\n`https://www.instagram.com/reel/XYZ/`",
+        "📥 **لینک اینستاگرام رو برام بفرست**\n\nمثال:\n`https://www.instagram.com/p/ABC123/`\n`https://www.instagram.com/reel/XYZ/`\n`https://www.instagram.com/stories/username/`",
         parse_mode='Markdown'
     )
 
@@ -134,11 +181,11 @@ def help_btn(message):
 🔹 **پشتیبانی از:**
 - پست‌های عادی (عکس/ویدیو)
 - ریلز
-- استوری هایلایت
+- استوری
 
 ⚠️ **محدودیت‌ها:**
 - حجم فایل تا ۵۰ مگابایت (محدودیت تلگرام)
-- لینک باید عمومی باشه
+- فقط لینک‌های عمومی
 
 🆔 پشتیبانی: @hegzo_support
 """
@@ -172,75 +219,6 @@ def support_btn(message):
 def back_home(message):
     bot.reply_to(message, "🏠 **صفحه اصلی**", reply_markup=main_keyboard())
 
-# ========== تابع دانلود از اینستاگرام ==========
-def download_instagram(link):
-    """دانلود محتوای اینستاگرام با instaloader"""
-    try:
-        loader = instaloader.Instaloader()
-        
-        # تشخیص نوع لینک
-        if '/p/' in link:
-            shortcode = link.split('/p/')[1].split('/')[0]
-            post = instaloader.Post.from_shortcode(loader.context, shortcode)
-            return download_post(post)
-        elif '/reel/' in link:
-            shortcode = link.split('/reel/')[1].split('/')[0]
-            post = instaloader.Post.from_shortcode(loader.context, shortcode)
-            return download_post(post)
-        elif '/stories/' in link:
-            # استوری
-            username = link.split('/stories/')[1].split('/')[0]
-            profile = instaloader.Profile.from_username(loader.context, username)
-            return download_story(loader, profile)
-        else:
-            return None, "❌ لینک معتبر نیست!"
-            
-    except Exception as e:
-        return None, f"❌ خطا در دانلود: {str(e)}"
-
-def download_post(post):
-    """دانلود پست یا ریلز"""
-    try:
-        if post.is_video:
-            # دانلود ویدیو
-            video_url = post.video_url
-            response = requests.get(video_url)
-            if response.status_code == 200:
-                filename = f"instagram_{post.shortcode}.mp4"
-                with open(filename, 'wb') as f:
-                    f.write(response.content)
-                return filename, "✅ ویدیو دانلود شد!"
-        else:
-            # دانلود عکس
-            image_url = post.url
-            response = requests.get(image_url)
-            if response.status_code == 200:
-                filename = f"instagram_{post.shortcode}.jpg"
-                with open(filename, 'wb') as f:
-                    f.write(response.content)
-                return filename, "✅ عکس دانلود شد!"
-        return None, "❌ دانلود ناموفق!"
-    except Exception as e:
-        return None, f"❌ خطا: {str(e)}"
-
-def download_story(loader, profile):
-    """دانلود استوری"""
-    try:
-        stories = loader.get_stories([profile.userid])
-        for story in stories:
-            for item in story.get_items():
-                if item.is_video:
-                    filename = f"story_{profile.username}_{item.mediaid}.mp4"
-                    loader.download_storyitem(item, target=filename)
-                    return filename, "✅ استوری دانلود شد!"
-                else:
-                    filename = f"story_{profile.username}_{item.mediaid}.jpg"
-                    loader.download_storyitem(item, target=filename)
-                    return filename, "✅ استوری دانلود شد!"
-        return None, "❌ استوری پیدا نشد!"
-    except Exception as e:
-        return None, f"❌ خطا: {str(e)}"
-
 # ========== دریافت لینک از کاربر ==========
 @bot.message_handler(func=lambda m: True)
 def handle_message(message):
@@ -273,20 +251,38 @@ def handle_message(message):
         if filename and os.path.exists(filename):
             # ارسال فایل
             try:
+                # تشخیص نوع فایل
+                file_size = os.path.getsize(filename) / (1024 * 1024)  # حجم به مگابایت
+                
+                if file_size > 50:
+                    bot.reply_to(message, f"⚠️ حجم فایل {file_size:.1f} مگابایت هست که از محدودیت ۵۰ مگابایت تلگرام بیشتره!")
+                    os.remove(filename)
+                    return
+                
                 with open(filename, 'rb') as f:
-                    if filename.endswith('.mp4'):
-                        bot.send_video(message.chat.id, f, caption=msg)
-                    else:
+                    if filename.endswith('.mp4') or filename.endswith('.mov'):
+                        bot.send_video(message.chat.id, f, caption=msg, supports_streaming=True)
+                    elif filename.endswith('.jpg') or filename.endswith('.jpeg') or filename.endswith('.png'):
                         bot.send_photo(message.chat.id, f, caption=msg)
-                os.remove(filename)  # پاک کردن فایل بعد از ارسال
+                    elif filename.endswith('.mp3') or filename.endswith('.aac'):
+                        bot.send_audio(message.chat.id, f, caption=msg)
+                    else:
+                        bot.send_document(message.chat.id, f, caption=msg)
+                
+                # پاک کردن فایل بعد از ارسال
+                os.remove(filename)
+                bot.reply_to(message, "✅ فایل با موفقیت ارسال شد!")
+                
             except Exception as e:
-                bot.reply_to(message, f"❌ خطا در ارسال: {str(e)}")
+                bot.reply_to(message, f"❌ خطا در ارسال: {str(e)[:100]}")
+                if os.path.exists(filename):
+                    os.remove(filename)
         else:
             bot.reply_to(message, msg)
     else:
         # اگر لینک نبود
         bot.reply_to(message,
-            "❌ لطفاً یک لینک معتبر اینستاگرام بفرست.\n\nمثال:\n`https://www.instagram.com/p/ABC123/`",
+            "❌ لطفاً یک لینک معتبر اینستاگرام بفرست.\n\nمثال:\n`https://www.instagram.com/p/ABC123/`\n`https://www.instagram.com/reel/XYZ/`",
             parse_mode='Markdown'
         )
 
