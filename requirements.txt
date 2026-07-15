@@ -1,2 +1,5 @@
-pyTelegramBotAPI==4.15.0
-Flask==2.3.3
+telebot==0.0.5
+flask==2.3.3
+instaloader==4.10
+requests==2.31.0
+python-dotenv==1.0.0
