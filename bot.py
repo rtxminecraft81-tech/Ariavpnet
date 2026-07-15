@@ -7,7 +7,8 @@ from datetime import datetime
 from flask import Flask
 import threading
 import re
-from instagrapi import Client
+import yt_dlp
+import requests
 
 app = Flask(__name__)
 
@@ -22,29 +23,8 @@ if not TOKEN:
 ADMIN_ID = '6795169616'
 CHANNEL_USERNAME = '@hegzo_vpn_channle'
 
-# ========== اطلاعات اکانت اینستاگرام ==========
-INSTA_USERNAME = os.environ.get('INSTA_USERNAME')
-INSTA_PASSWORD = os.environ.get('INSTA_PASSWORD')
-
 bot = telebot.TeleBot(TOKEN)
 USER_DB = 'users.json'
-
-# ========== راه‌اندازی کلاینت اینستاگرام ==========
-def get_instagram_client():
-    if not INSTA_USERNAME or not INSTA_PASSWORD:
-        print("❌ اطلاعات اکانت اینستاگرام موجود نیست!")
-        return None
-    cl = Client()
-    cl.set_user_agent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
-    try:
-        cl.login(INSTA_USERNAME, INSTA_PASSWORD)
-        print(f"✅ لاگین به اینستاگرام موفق! (کاربر: {INSTA_USERNAME})")
-        return cl
-    except Exception as e:
-        print(f"❌ خطا در لاگین: {e}")
-        return None
-
-instagram_client = get_instagram_client()
 
 # ========== بخش کاربران ==========
 def load_users():
@@ -99,85 +79,50 @@ def main_keyboard():
     markup.add("🏠 صفحه اصلی")
     return markup
 
-# ========== تابع دانلود ==========
+# ========== تابع دانلود با yt-dlp (بدون لاگین) ==========
 def download_instagram(link):
-    global instagram_client
-    
+    """دانلود با yt-dlp - بدون نیاز به لاگین"""
     try:
-        if instagram_client is None:
-            instagram_client = get_instagram_client()
-            if instagram_client is None:
-                return None, "❌ مشکل در اتصال به اینستاگرام!"
-        
-        shortcode = None
-        if '/p/' in link:
-            shortcode = link.split('/p/')[1].split('/')[0]
-        elif '/reel/' in link:
-            shortcode = link.split('/reel/')[1].split('/')[0]
-        elif '/stories/' in link:
-            return download_story(link)
-        else:
-            return None, "❌ لینک معتبر نیست!"
-        
-        if not shortcode:
-            return None, "❌ لینک معتبر نیست!"
-        
-        media_id = instagram_client.media_id(shortcode)
-        info = instagram_client.media_info(media_id)
-        
         if not os.path.exists('downloads'):
             os.makedirs('downloads')
         
-        if info.media_type == 1:
-            filename = f"downloads/instagram_{shortcode}.jpg"
-            instagram_client.photo_download(media_id, filename)
-            return filename, "✅ عکس دانلود شد!"
-        elif info.media_type == 2:
-            filename = f"downloads/instagram_{shortcode}.mp4"
-            instagram_client.video_download(media_id, filename)
-            return filename, "✅ ویدیو دانلود شد!"
-        elif info.media_type == 8:
-            filename = f"downloads/instagram_{shortcode}_1.jpg"
-            instagram_client.photo_download(media_id, filename)
-            return filename, "✅ عکس دانلود شد!"
+        ydl_opts = {
+            'outtmpl': 'downloads/instagram_%(id)s.%(ext)s',
+            'quiet': True,
+            'no_warnings': True,
+            'ignoreerrors': True,
+            'no_check_certificate': True,
+            'cookiefile': None,
+            'headers': {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+                'Accept-Language': 'en-US,en;q=0.5',
+                'Sec-Fetch-Mode': 'navigate',
+            }
+        }
+        
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            info = ydl.extract_info(link, download=True)
+            if info:
+                filename = ydl.prepare_filename(info)
+                if os.path.exists(filename):
+                    return filename, "✅ دانلود انجام شد!"
+                
+                # اگه اسم فایل تغییر کرده بود
+                for f in os.listdir('downloads'):
+                    if info.get('id') and info['id'] in f:
+                        return os.path.join('downloads', f), "✅ دانلود انجام شد!"
+        
+        return None, "❌ دانلود ناموفق! لینک رو بررسی کن."
+        
+    except Exception as e:
+        error_msg = str(e)
+        if "Private" in error_msg:
+            return None, "❌ این پست خصوصی هست! فقط پست‌های عمومی قابل دانلود هستن."
+        elif "login" in error_msg.lower():
+            return None, "❌ این لینک نیاز به لاگین داره! لطفاً یه لینک عمومی بفرست."
         else:
-            return None, "❌ نوع محتوا پشتیبانی نمی‌شود!"
-            
-    except Exception as e:
-        return None, f"❌ خطا: {str(e)[:100]}"
-
-def download_story(link):
-    global instagram_client
-    
-    try:
-        if instagram_client is None:
-            instagram_client = get_instagram_client()
-            if instagram_client is None:
-                return None, "❌ مشکل در اتصال به اینستاگرام!"
-        
-        username = link.split('/stories/')[1].split('/')[0]
-        user_id = instagram_client.user_id_from_username(username)
-        stories = instagram_client.user_stories(user_id)
-        
-        if not stories:
-            return None, "❌ استوری پیدا نشد!"
-        
-        for story in stories:
-            if not os.path.exists('downloads'):
-                os.makedirs('downloads')
-            
-            if story.media_type == 1:
-                filename = f"downloads/story_{username}_{story.id}.jpg"
-                instagram_client.story_download(story.id, filename)
-                return filename, "✅ استوری دانلود شد!"
-            elif story.media_type == 2:
-                filename = f"downloads/story_{username}_{story.id}.mp4"
-                instagram_client.story_download(story.id, filename)
-                return filename, "✅ استوری دانلود شد!"
-        
-        return None, "❌ استوری پیدا نشد!"
-    except Exception as e:
-        return None, f"❌ خطا: {str(e)[:100]}"
+            return None, f"❌ خطا: {error_msg[:100]}"
 
 # ========== دستورات ربات ==========
 @bot.message_handler(commands=['start', 'help'])
@@ -241,7 +186,7 @@ def invite(m):
 
 @bot.message_handler(func=lambda m: m.text == "🆘 پشتیبانی")
 def support(m):
-    bot.reply_to(m, "🆘 **پشتیبانی**\n\n@hegzo_support")
+    bot.reply_to(m, "🆘 **پشتیبانی**\n\n@hegzosupport")
 
 @bot.message_handler(func=lambda m: True)
 def handle_message(m):
@@ -264,20 +209,33 @@ def handle_message(m):
     
     if match:
         link = match.group(1)
-        bot.reply_to(m, "⏳ در حال دانلود...")
+        msg = bot.reply_to(m, "⏳ در حال دانلود... لطفاً صبر کن")
         
         filename, result = download_instagram(link)
         
         if filename and os.path.exists(filename):
             try:
+                file_size = os.path.getsize(filename) / (1024 * 1024)
+                if file_size > 50:
+                    bot.reply_to(m, f"⚠️ حجم فایل {file_size:.1f} مگابایت هست که از محدودیت ۵۰ مگابایت تلگرام بیشتره!")
+                    os.remove(filename)
+                    return
+                
                 with open(filename, 'rb') as f:
                     if filename.endswith('.mp4'):
-                        bot.send_video(m.chat.id, f, caption=result)
-                    else:
+                        bot.send_video(m.chat.id, f, caption=result, supports_streaming=True)
+                    elif filename.endswith('.jpg') or filename.endswith('.jpeg') or filename.endswith('.png'):
                         bot.send_photo(m.chat.id, f, caption=result)
+                    else:
+                        bot.send_document(m.chat.id, f, caption=result)
+                
                 os.remove(filename)
+                bot.send_message(m.chat.id, "✅ فایل با موفقیت ارسال شد!")
+                
             except Exception as e:
-                bot.reply_to(m, f"❌ خطا: {str(e)[:100]}")
+                bot.reply_to(m, f"❌ خطا در ارسال: {str(e)[:100]}")
+                if os.path.exists(filename):
+                    os.remove(filename)
         else:
             bot.reply_to(m, result)
     else:
@@ -290,8 +248,10 @@ if __name__ == '__main__':
     if not os.path.exists('downloads'):
         os.makedirs('downloads')
     
+    # پاک کردن webhook قبل از شروع
     try:
-        bot.delete_webhook()
+        bot.remove_webhook()
+        print("✅ Webhook پاک شد!")
     except:
         pass
     
