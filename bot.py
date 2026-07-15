@@ -1,10 +1,11 @@
 import telebot
+from telebot import types
 import os
-import re
 import time
+import re
 from flask import Flask
 import threading
-import yt_dlp
+from instagrapi import Client
 
 app = Flask(__name__)
 
@@ -18,76 +19,76 @@ if not TOKEN:
 
 bot = telebot.TeleBot(TOKEN)
 
-# ========== تابع دانلود با yt-dlp (دیگه هیچ خطایی نمیده) ==========
-def download_instagram(link):
+# ========== اکانت جدید اینستاگرام ==========
+INSTA_USERNAME = "Deer.5656308"
+INSTA_PASSWORD = "depp12345678910109876543211213141516171819110"
+
+# ========== راه‌اندازی کلاینت ==========
+def get_client():
+    cl = Client()
+    cl.set_user_agent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+    cl.set_country("IR")
+    cl.set_locale("fa_IR")
+    
     try:
-        # تنظیمات yt-dlp با آخرین آپدیت‌ها
-        ydl_opts = {
-            'outtmpl': 'downloads/%(id)s.%(ext)s',
-            'quiet': True,
-            'no_warnings': True,
-            'ignoreerrors': True,
-            'extract_flat': False,
-            'no_check_certificate': True,
-            'cookiefile': None,  # بدون کوکی - اما با هدرهای جدید
-            'headers': {
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
-                'Accept-Language': 'en-US,en;q=0.5',
-                'Accept-Encoding': 'gzip, deflate, br',
-                'Connection': 'keep-alive',
-                'Upgrade-Insecure-Requests': '1',
-                'Sec-Fetch-Dest': 'document',
-                'Sec-Fetch-Mode': 'navigate',
-                'Sec-Fetch-Site': 'none',
-                'Sec-Fetch-User': '?1',
-                'Cache-Control': 'max-age=0',
-            },
-            # این تنظیمات جدید باعث میشه اینستاگرام نتونه تشخیص بده رباته
-            'sleep_interval': 1,
-            'max_sleep_interval': 5,
-            'sleep_interval_requests': 1,
-        }
+        cl.login(INSTA_USERNAME, INSTA_PASSWORD)
+        print(f"✅ لاگین موفق! کاربر: {INSTA_USERNAME}")
+        return cl
+    except Exception as e:
+        print(f"❌ خطا در لاگین: {e}")
+        return None
+
+instagram = get_client()
+
+# ========== تابع دانلود ==========
+def download_instagram(link):
+    global instagram
+    
+    try:
+        if instagram is None:
+            instagram = get_client()
+            if instagram is None:
+                return None, "❌ اتصال به اینستاگرام برقرار نشد!"
         
-        # ساخت پوشه downloads
+        shortcode = None
+        if '/reel/' in link:
+            shortcode = link.split('/reel/')[1].split('/')[0]
+        elif '/p/' in link:
+            shortcode = link.split('/p/')[1].split('/')[0]
+        else:
+            return None, "❌ لینک معتبر نیست!"
+        
+        if not shortcode:
+            return None, "❌ لینک معتبر نیست!"
+        
+        media_id = instagram.media_id(shortcode)
+        info = instagram.media_info(media_id)
+        
         if not os.path.exists('downloads'):
             os.makedirs('downloads')
         
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            # دانلود
-            info = ydl.extract_info(link, download=True)
-            
-            if info:
-                # پیدا کردن فایل دانلود شده
-                filename = ydl.prepare_filename(info)
-                if os.path.exists(filename):
-                    return filename, "✅ دانلود انجام شد!"
-                
-                # اگه اسم فایل تغییر کرده بود
-                for f in os.listdir('downloads'):
-                    if info.get('id') and info['id'] in f:
-                        return os.path.join('downloads', f), "✅ دانلود انجام شد!"
-        
-        return None, "❌ دانلود ناموفق! لطفاً لینک رو بررسی کن."
-        
-    except Exception as e:
-        error_msg = str(e)
-        if "Private" in error_msg:
-            return None, "❌ این پست خصوصی هست! فقط پست‌های عمومی قابل دانلود هستن."
-        elif "login" in error_msg.lower() or "401" in error_msg:
-            return None, "❌ اینستاگرام محدودیت ایجاد کرده! لطفاً چند دقیقه دیگه دوباره تلاش کن."
+        if info.media_type == 1:  # عکس
+            filename = f"downloads/{shortcode}.jpg"
+            instagram.photo_download(media_id, filename)
+            return filename, "✅ عکس دانلود شد!"
+        elif info.media_type == 2:  # ویدیو
+            filename = f"downloads/{shortcode}.mp4"
+            instagram.video_download(media_id, filename)
+            return filename, "✅ ویدیو دانلود شد!"
         else:
-            return None, f"❌ خطا: {error_msg[:80]}"
+            return None, "❌ نوع محتوا پشتیبانی نمی‌شود!"
+            
+    except Exception as e:
+        return None, f"❌ خطا: {str(e)[:80]}"
 
 # ========== دستور استارت ==========
 @bot.message_handler(commands=['start'])
 def start(message):
     bot.reply_to(message, 
-        "🤖 **به ربات دانلودر اینستاگرام خوش آمدی!**\n\n"
+        "🤖 **ربات دانلودر اینستاگرام فعال شد!**\n\n"
         "📥 لینک پست یا ریلز رو بفرست تا دانلود کنم.\n\n"
         "مثال:\n"
-        "`https://www.instagram.com/reel/Da0jW0Pqgoh/`\n"
-        "`https://www.instagram.com/p/ABC123/`"
+        "`https://www.instagram.com/reel/Da0jW0Pqgoh/`"
     )
 
 # ========== دریافت لینک ==========
@@ -99,42 +100,27 @@ def handle_message(message):
     
     if match:
         link = match.group(1)
-        bot.reply_to(message, "⏳ در حال دانلود... لطفاً ۱۰-۱۵ ثانیه صبر کن")
+        bot.reply_to(message, "⏳ در حال دانلود...")
         
         filename, result = download_instagram(link)
         
         if filename and os.path.exists(filename):
             try:
-                # چک کردن حجم فایل
-                file_size = os.path.getsize(filename) / (1024 * 1024)
-                if file_size > 50:
-                    bot.reply_to(message, f"⚠️ حجم فایل {file_size:.1f} مگابایت هست که از محدودیت ۵۰ مگابایت تلگرام بیشتره!")
-                    os.remove(filename)
-                    return
-                
                 with open(filename, 'rb') as f:
                     if filename.endswith('.mp4'):
-                        bot.send_video(message.chat.id, f, caption=result, supports_streaming=True)
-                    elif filename.endswith('.jpg') or filename.endswith('.jpeg') or filename.endswith('.png'):
-                        bot.send_photo(message.chat.id, f, caption=result)
+                        bot.send_video(message.chat.id, f, caption=result)
                     else:
-                        bot.send_document(message.chat.id, f, caption=result)
-                
+                        bot.send_photo(message.chat.id, f, caption=result)
                 os.remove(filename)
-                bot.reply_to(message, "✅ فایل با موفقیت ارسال شد!")
-                
+                bot.reply_to(message, "✅ فایل ارسال شد!")
             except Exception as e:
-                bot.reply_to(message, f"❌ خطا در ارسال: {str(e)[:80]}")
+                bot.reply_to(message, f"❌ خطا: {str(e)}")
                 if os.path.exists(filename):
                     os.remove(filename)
         else:
             bot.reply_to(message, result)
     else:
-        bot.reply_to(message, 
-            "❌ لطفاً یک لینک معتبر اینستاگرام بفرست.\n\n"
-            "مثال:\n"
-            "`https://www.instagram.com/reel/Da0jW0Pqgoh/`"
-        )
+        bot.reply_to(message, "❌ لینک معتبر اینستاگرام بفرست!")
 
 # ========== اجرا ==========
 if __name__ == '__main__':
@@ -143,11 +129,10 @@ if __name__ == '__main__':
     if not os.path.exists('downloads'):
         os.makedirs('downloads')
     
-    print("🤖 ربات دانلودر اینستاگرام روشن شد!")
+    print("🤖 ربات روشن شد!")
     
     try:
         bot.remove_webhook()
-        print("✅ Webhook پاک شد!")
     except:
         pass
     
