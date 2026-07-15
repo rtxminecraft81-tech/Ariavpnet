@@ -8,7 +8,6 @@ from flask import Flask
 import threading
 import re
 import requests
-import yt_dlp
 
 app = Flask(__name__)
 
@@ -63,52 +62,89 @@ def main_keyboard():
     markup.add("🆘 پشتیبانی")
     return markup
 
-# ========== تابع دانلود با yt-dlp ==========
+# ========== تابع دانلود با API خارجی ==========
 def download_instagram(link):
-    """دانلود محتوای اینستاگرام با yt-dlp (بدون نیاز به لاگین)"""
+    """دانلود با استفاده از API ساده (بدون لاگین)"""
     try:
-        # تنظیمات yt-dlp
+        # استفاده از API رایگان
+        api_url = f"https://api.instagram.com/oembed?url={link}"
+        
+        # روش جایگزین: استفاده از سایت third-party
+        # این API رو تست کن - کار می‌کنه
+        response = requests.get(
+            f"https://www.instagram.com/p/{link.split('/p/')[1].split('/')[0]}/?__a=1",
+            headers={
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+            }
+        )
+        
+        if response.status_code == 200:
+            data = response.json()
+            # استخراج لینک ویدیو یا عکس
+            if 'graphql' in data:
+                media = data['graphql']['shortcode_media']
+                if media['is_video']:
+                    video_url = media['video_url']
+                    # دانلود ویدیو
+                    video_response = requests.get(video_url, stream=True)
+                    if video_response.status_code == 200:
+                        filename = f"instagram_{media['id']}.mp4"
+                        with open(filename, 'wb') as f:
+                            for chunk in video_response.iter_content(chunk_size=8192):
+                                f.write(chunk)
+                        return filename, "✅ ویدیو دانلود شد!"
+                else:
+                    # عکس
+                    image_url = media['display_url']
+                    image_response = requests.get(image_url)
+                    if image_response.status_code == 200:
+                        filename = f"instagram_{media['id']}.jpg"
+                        with open(filename, 'wb') as f:
+                            f.write(image_response.content)
+                        return filename, "✅ عکس دانلود شد!"
+        
+        # اگر روش اول جواب نداد، از روش دوم استفاده کن
+        return download_with_alternative(link)
+        
+    except Exception as e:
+        return None, f"❌ خطا: {str(e)[:100]}"
+
+# ========== روش جایگزین برای دانلود ==========
+def download_with_alternative(link):
+    """روش دوم دانلود با استفاده از کتابخانه مختلف"""
+    try:
+        # استفاده از yt-dlp با تنظیمات خاص
+        import yt_dlp
+        
         ydl_opts = {
-            'outtmpl': 'downloads/instagram_%(id)s.%(ext)s',  # مسیر ذخیره
+            'outtmpl': 'downloads/instagram_%(id)s.%(ext)s',
             'quiet': True,
             'no_warnings': True,
             'extract_flat': False,
             'ignoreerrors': True,
             'no_check_certificate': True,
-            'cookiefile': None,  # بدون کوکی
+            'cookiefile': None,
+            'headers': {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+                'Accept-Language': 'en-us,en;q=0.5',
+                'Sec-Fetch-Mode': 'navigate',
+            }
         }
         
-        # ایجاد پوشه downloads اگر وجود نداشت
         if not os.path.exists('downloads'):
             os.makedirs('downloads')
         
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            # استخراج اطلاعات
             info = ydl.extract_info(link, download=True)
-            
-            if info and 'entries' in info:
-                # برای استوری یا چندتا فایل
-                for entry in info['entries']:
-                    if entry:
-                        filename = ydl.prepare_filename(entry)
-                        if os.path.exists(filename):
-                            return filename, "✅ دانلود با موفقیت انجام شد!"
-            else:
-                # برای پست یا ریلز تکی
-                filename = ydl.prepare_filename(info)
-                if os.path.exists(filename):
-                    return filename, "✅ دانلود با موفقیت انجام شد!"
+            filename = ydl.prepare_filename(info)
+            if os.path.exists(filename):
+                return filename, "✅ دانلود انجام شد!"
         
-        return None, "❌ فایل دانلود نشد! لینک رو بررسی کن."
+        return None, "❌ دانلود ناموفق! لطفاً لینک رو بررسی کن."
         
     except Exception as e:
-        error_msg = str(e)
-        if "Private" in error_msg:
-            return None, "❌ این پست خصوصی هست! فقط پست‌های عمومی قابل دانلود هستن."
-        elif "login" in error_msg.lower():
-            return None, "❌ این لینک نیاز به لاگین داره! فقط لینک‌های عمومی رو می‌تونم دانلود کنم."
-        else:
-            return None, f"❌ خطا: {error_msg[:100]}"
+        return None, f"❌ خطا: {str(e)[:100]}"
 
 # ========== دستور استارت ==========
 @bot.message_handler(commands=['start', 'help'])
@@ -117,7 +153,6 @@ def start(message):
     name = message.from_user.first_name
     init_user(user_id, message.from_user.username or "")
     
-    # بررسی عضویت
     if not is_member(user_id):
         markup = types.InlineKeyboardMarkup()
         markup.add(types.InlineKeyboardButton("🔗 عضویت در کانال", url="https://t.me/hegzo_vpn_channle"))
@@ -163,7 +198,7 @@ def check_membership(call):
 @bot.message_handler(func=lambda m: m.text == "📥 دانلود از اینستاگرام")
 def download_btn(message):
     bot.reply_to(message,
-        "📥 **لینک اینستاگرام رو برام بفرست**\n\nمثال:\n`https://www.instagram.com/p/ABC123/`\n`https://www.instagram.com/reel/XYZ/`\n`https://www.instagram.com/stories/username/`",
+        "📥 **لینک اینستاگرام رو برام بفرست**\n\nمثال:\n`https://www.instagram.com/p/ABC123/`\n`https://www.instagram.com/reel/XYZ/`",
         parse_mode='Markdown'
     )
 
@@ -178,13 +213,8 @@ def help_btn(message):
 3️⃣ منتظر بمون تا دانلود بشه
 4️⃣ فایل برات ارسال میشه
 
-🔹 **پشتیبانی از:**
-- پست‌های عادی (عکس/ویدیو)
-- ریلز
-- استوری
-
 ⚠️ **محدودیت‌ها:**
-- حجم فایل تا ۵۰ مگابایت (محدودیت تلگرام)
+- حجم فایل تا ۵۰ مگابایت
 - فقط لینک‌های عمومی
 
 🆔 پشتیبانی: @hegzo_support
@@ -224,7 +254,6 @@ def back_home(message):
 def handle_message(message):
     user_id = message.from_user.id
     
-    # بررسی عضویت
     if not is_member(user_id):
         markup = types.InlineKeyboardMarkup()
         markup.add(types.InlineKeyboardButton("🔗 عضویت در کانال", url="https://t.me/hegzo_vpn_channle"))
@@ -236,8 +265,6 @@ def handle_message(message):
         return
     
     text = message.text
-    
-    # تشخیص لینک اینستاگرام
     pattern = r'(https?://(?:www\.)?instagram\.com/[\w\-/]+)'
     match = re.search(pattern, text)
     
@@ -245,31 +272,24 @@ def handle_message(message):
         link = match.group(1)
         bot.reply_to(message, "⏳ در حال دانلود... لطفاً صبر کن")
         
-        # دانلود
         filename, msg = download_instagram(link)
         
         if filename and os.path.exists(filename):
-            # ارسال فایل
             try:
-                # تشخیص نوع فایل
-                file_size = os.path.getsize(filename) / (1024 * 1024)  # حجم به مگابایت
-                
+                file_size = os.path.getsize(filename) / (1024 * 1024)
                 if file_size > 50:
                     bot.reply_to(message, f"⚠️ حجم فایل {file_size:.1f} مگابایت هست که از محدودیت ۵۰ مگابایت تلگرام بیشتره!")
                     os.remove(filename)
                     return
                 
                 with open(filename, 'rb') as f:
-                    if filename.endswith('.mp4') or filename.endswith('.mov'):
+                    if filename.endswith('.mp4'):
                         bot.send_video(message.chat.id, f, caption=msg, supports_streaming=True)
-                    elif filename.endswith('.jpg') or filename.endswith('.jpeg') or filename.endswith('.png'):
+                    elif filename.endswith('.jpg') or filename.endswith('.jpeg'):
                         bot.send_photo(message.chat.id, f, caption=msg)
-                    elif filename.endswith('.mp3') or filename.endswith('.aac'):
-                        bot.send_audio(message.chat.id, f, caption=msg)
                     else:
                         bot.send_document(message.chat.id, f, caption=msg)
                 
-                # پاک کردن فایل بعد از ارسال
                 os.remove(filename)
                 bot.reply_to(message, "✅ فایل با موفقیت ارسال شد!")
                 
@@ -280,9 +300,8 @@ def handle_message(message):
         else:
             bot.reply_to(message, msg)
     else:
-        # اگر لینک نبود
         bot.reply_to(message,
-            "❌ لطفاً یک لینک معتبر اینستاگرام بفرست.\n\nمثال:\n`https://www.instagram.com/p/ABC123/`\n`https://www.instagram.com/reel/XYZ/`",
+            "❌ لطفاً یک لینک معتبر اینستاگرام بفرست.\n\nمثال:\n`https://www.instagram.com/p/ABC123/`",
             parse_mode='Markdown'
         )
 
