@@ -8,6 +8,7 @@ from flask import Flask
 import threading
 import re
 import requests
+import urllib.parse
 
 app = Flask(__name__)
 
@@ -64,60 +65,32 @@ def main_keyboard():
 
 # ========== تابع دانلود با API خارجی ==========
 def download_instagram(link):
-    """دانلود با استفاده از API ساده (بدون لاگین)"""
+    """دانلود با استفاده از API رایگان"""
     try:
-        # استفاده از API رایگان
-        api_url = f"https://api.instagram.com/oembed?url={link}"
-        
-        # روش جایگزین: استفاده از سایت third-party
-        # این API رو تست کن - کار می‌کنه
-        response = requests.get(
-            f"https://www.instagram.com/p/{link.split('/p/')[1].split('/')[0]}/?__a=1",
-            headers={
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
-            }
-        )
+        # روش 1: استفاده از API ساده
+        api_url = "https://api.instagram.com/oembed"
+        params = {'url': link}
+        response = requests.get(api_url, params=params, timeout=10)
         
         if response.status_code == 200:
             data = response.json()
-            # استخراج لینک ویدیو یا عکس
-            if 'graphql' in data:
-                media = data['graphql']['shortcode_media']
-                if media['is_video']:
-                    video_url = media['video_url']
-                    # دانلود ویدیو
-                    video_response = requests.get(video_url, stream=True)
-                    if video_response.status_code == 200:
-                        filename = f"instagram_{media['id']}.mp4"
-                        with open(filename, 'wb') as f:
-                            for chunk in video_response.iter_content(chunk_size=8192):
-                                f.write(chunk)
-                        return filename, "✅ ویدیو دانلود شد!"
-                else:
-                    # عکس
-                    image_url = media['display_url']
-                    image_response = requests.get(image_url)
-                    if image_response.status_code == 200:
-                        filename = f"instagram_{media['id']}.jpg"
-                        with open(filename, 'wb') as f:
-                            f.write(image_response.content)
-                        return filename, "✅ عکس دانلود شد!"
+            # این API فقط اطلاعات رو میده، برای دانلود باید از روش دیگه استفاده کنیم
+            return download_with_alternative(link)
         
-        # اگر روش اول جواب نداد، از روش دوم استفاده کن
-        return download_with_alternative(link)
+        # روش 2: استفاده از yt-dlp با تنظیمات بهینه
+        return download_with_ytdlp(link)
         
     except Exception as e:
         return None, f"❌ خطا: {str(e)[:100]}"
 
-# ========== روش جایگزین برای دانلود ==========
-def download_with_alternative(link):
-    """روش دوم دانلود با استفاده از کتابخانه مختلف"""
+# ========== دانلود با yt-dlp (نسخه بهینه) ==========
+def download_with_ytdlp(link):
     try:
-        # استفاده از yt-dlp با تنظیمات خاص
         import yt_dlp
         
+        # تنظیمات بهینه برای اینستاگرام
         ydl_opts = {
-            'outtmpl': 'downloads/instagram_%(id)s.%(ext)s',
+            'outtmpl': 'downloads/%(title)s_%(id)s.%(ext)s',
             'quiet': True,
             'no_warnings': True,
             'extract_flat': False,
@@ -125,21 +98,112 @@ def download_with_alternative(link):
             'no_check_certificate': True,
             'cookiefile': None,
             'headers': {
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-                'Accept-Language': 'en-us,en;q=0.5',
-                'Sec-Fetch-Mode': 'navigate',
-            }
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+                'Accept-Language': 'en-US,en;q=0.5',
+                'Accept-Encoding': 'gzip, deflate, br',
+                'Connection': 'keep-alive',
+                'Upgrade-Insecure-Requests': '1',
+            },
+            'postprocessors': [{
+                'key': 'FFmpegExtractAudio',
+                'preferredcodec': 'mp3',
+                'preferredquality': '192',
+            }],
+            'format': 'best',
         }
         
+        # ایجاد پوشه downloads
         if not os.path.exists('downloads'):
             os.makedirs('downloads')
         
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            # استخراج اطلاعات
             info = ydl.extract_info(link, download=True)
-            filename = ydl.prepare_filename(info)
-            if os.path.exists(filename):
-                return filename, "✅ دانلود انجام شد!"
+            
+            if info:
+                filename = ydl.prepare_filename(info)
+                # چک کردن وجود فایل
+                if os.path.exists(filename):
+                    return filename, "✅ دانلود انجام شد!"
+                else:
+                    # ممکنه اسم فایل تغییر کرده باشه
+                    for file in os.listdir('downloads'):
+                        if info.get('id') in file:
+                            return os.path.join('downloads', file), "✅ دانلود انجام شد!"
+            
+            return None, "❌ دانلود ناموفق! لطفاً لینک رو بررسی کن."
+            
+    except Exception as e:
+        error_msg = str(e)
+        if "Private" in error_msg or "private" in error_msg:
+            return None, "❌ این پست خصوصی هست! فقط پست‌های عمومی قابل دانلود هستن."
+        elif "login" in error_msg.lower():
+            return None, "❌ این لینک نیاز به لاگین داره! لطفاً یه لینک عمومی بفرست."
+        else:
+            return None, f"❌ خطا: {error_msg[:100]}"
+
+# ========== روش ساده با استفاده از سایت third-party ==========
+def download_simple(link):
+    """ساده‌ترین روش - استفاده از API رایگان"""
+    try:
+        # استخراج shortcode از لینک
+        shortcode = None
+        if '/p/' in link:
+            shortcode = link.split('/p/')[1].split('/')[0]
+        elif '/reel/' in link:
+            shortcode = link.split('/reel/')[1].split('/')[0]
+        elif '/tv/' in link:
+            shortcode = link.split('/tv/')[1].split('/')[0]
+        
+        if not shortcode:
+            return None, "❌ لینک معتبر نیست!"
+        
+        # استفاده از API اینستاگرام (نیاز به هدرهای خاص)
+        url = f"https://www.instagram.com/p/{shortcode}/?__a=1&__d=1"
+        
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+            'Accept-Language': 'en-US,en;q=0.5',
+            'Accept-Encoding': 'gzip, deflate, br',
+            'Connection': 'keep-alive',
+            'Upgrade-Insecure-Requests': '1',
+            'Sec-Fetch-Dest': 'document',
+            'Sec-Fetch-Mode': 'navigate',
+            'Sec-Fetch-Site': 'none',
+            'Sec-Fetch-User': '?1',
+            'Cache-Control': 'max-age=0',
+        }
+        
+        response = requests.get(url, headers=headers, timeout=10)
+        
+        if response.status_code == 200:
+            data = response.json()
+            if 'graphql' in data and 'shortcode_media' in data['graphql']:
+                media = data['graphql']['shortcode_media']
+                
+                if media.get('is_video', False):
+                    video_url = media.get('video_url')
+                    if video_url:
+                        # دانلود ویدیو
+                        video_response = requests.get(video_url, stream=True)
+                        if video_response.status_code == 200:
+                            filename = f"downloads/instagram_{shortcode}.mp4"
+                            with open(filename, 'wb') as f:
+                                for chunk in video_response.iter_content(chunk_size=8192):
+                                    f.write(chunk)
+                            return filename, "✅ ویدیو دانلود شد!"
+                else:
+                    # عکس
+                    image_url = media.get('display_url')
+                    if image_url:
+                        image_response = requests.get(image_url)
+                        if image_response.status_code == 200:
+                            filename = f"downloads/instagram_{shortcode}.jpg"
+                            with open(filename, 'wb') as f:
+                                f.write(image_response.content)
+                            return filename, "✅ عکس دانلود شد!"
         
         return None, "❌ دانلود ناموفق! لطفاً لینک رو بررسی کن."
         
@@ -168,7 +232,7 @@ def start(message):
 
 📥 لینک پست، ریلز یا استوری اینستاگرام رو برام بفرست تا دانلودش کنم.
 
-🔹 **پشتیبانی:** ریلز، پست، استوری
+🔹 **پشتیبانی:** ریلز، پست
 🔹 **سرعت بالا و رایگان**
 🔹 **بدون نیاز به لاگین**
 
@@ -208,7 +272,7 @@ def help_btn(message):
     bot.reply_to(message,
         """📜 **راهنمای ربات دانلودر اینستاگرام**
 
-1️⃣ لینک پست/ریلز/استوری رو کپی کن
+1️⃣ لینک پست/ریلز رو کپی کن
 2️⃣ توی ربات برام بفرست
 3️⃣ منتظر بمون تا دانلود بشه
 4️⃣ فایل برات ارسال میشه
@@ -244,11 +308,6 @@ def support_btn(message):
         parse_mode='Markdown'
     )
 
-# ========== دکمه صفحه اصلی ==========
-@bot.message_handler(func=lambda m: m.text == "🏠 صفحه اصلی")
-def back_home(message):
-    bot.reply_to(message, "🏠 **صفحه اصلی**", reply_markup=main_keyboard())
-
 # ========== دریافت لینک از کاربر ==========
 @bot.message_handler(func=lambda m: True)
 def handle_message(message):
@@ -270,9 +329,14 @@ def handle_message(message):
     
     if match:
         link = match.group(1)
-        bot.reply_to(message, "⏳ در حال دانلود... لطفاً صبر کن")
+        bot.reply_to(message, "⏳ در حال دانلود... لطفاً صبر کن (حداکثر ۳۰ ثانیه)")
         
-        filename, msg = download_instagram(link)
+        # ابتدا با روش ساده امتحان کن
+        filename, msg = download_simple(link)
+        
+        # اگر جواب نداد، با روش دوم امتحان کن
+        if not filename or not os.path.exists(filename):
+            filename, msg = download_with_ytdlp(link)
         
         if filename and os.path.exists(filename):
             try:
@@ -285,23 +349,23 @@ def handle_message(message):
                 with open(filename, 'rb') as f:
                     if filename.endswith('.mp4'):
                         bot.send_video(message.chat.id, f, caption=msg, supports_streaming=True)
-                    elif filename.endswith('.jpg') or filename.endswith('.jpeg'):
+                    elif filename.endswith('.jpg') or filename.endswith('.jpeg') or filename.endswith('.png'):
                         bot.send_photo(message.chat.id, f, caption=msg)
                     else:
                         bot.send_document(message.chat.id, f, caption=msg)
                 
                 os.remove(filename)
-                bot.reply_to(message, "✅ فایل با موفقیت ارسال شد!")
+                bot.send_message(message.chat.id, "✅ فایل با موفقیت ارسال شد! برای دانلود مجدد، لینک جدید بفرست.")
                 
             except Exception as e:
                 bot.reply_to(message, f"❌ خطا در ارسال: {str(e)[:100]}")
                 if os.path.exists(filename):
                     os.remove(filename)
         else:
-            bot.reply_to(message, msg)
+            bot.reply_to(message, f"{msg}\n\n💡 نکته: مطمئن شو لینک عمومی هست و درست کپی کردی.")
     else:
         bot.reply_to(message,
-            "❌ لطفاً یک لینک معتبر اینستاگرام بفرست.\n\nمثال:\n`https://www.instagram.com/p/ABC123/`",
+            "❌ لطفاً یک لینک معتبر اینستاگرام بفرست.\n\nمثال:\n`https://www.instagram.com/p/ABC123/`\n`https://www.instagram.com/reel/XYZ/`",
             parse_mode='Markdown'
         )
 
@@ -309,6 +373,10 @@ def handle_message(message):
 if __name__ == '__main__':
     PORT = int(os.environ.get('PORT', 10000))
     print(f"🤖 ربات دانلودر اینستاگرام روی پورت {PORT} روشن شد!")
+    
+    # ایجاد پوشه downloads
+    if not os.path.exists('downloads'):
+        os.makedirs('downloads')
     
     try:
         bot.delete_webhook()
