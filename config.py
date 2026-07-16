@@ -39,8 +39,8 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # ============ تنظیمات عضویت اجباری ============
-FORCE_CHANNEL_ID = "@hegzo_vpn_channle"  # آیدی کانال
-FORCE_CHANNEL_LINK = "https://t.me/hegzo_vpn_channle"  # لینک کانال
+FORCE_CHANNEL_ID = "@hegzo_vpn_channle"
+FORCE_CHANNEL_LINK = "https://t.me/hegzo_vpn_channle"
 # ===========================================
 
 def _forum_topic_api_kwargs(message_thread_id: Optional[int]) -> Optional[Dict[str, Any]]:
@@ -88,9 +88,7 @@ class SocialLinksBot:
             return True
         return chat.id in self._allowed_chat_ids
 
-    # ============ تابع چک کردن عضویت ============
     async def is_subscribed(self, user_id: int) -> bool:
-        """بررسی میکنه کاربر عضو کاناله یا نه"""
         try:
             member = await self.application.bot.get_chat_member(
                 chat_id=FORCE_CHANNEL_ID,
@@ -100,10 +98,8 @@ class SocialLinksBot:
         except Exception as e:
             logger.error(f"Error checking subscription: {e}")
             return False
-    # ==========================================
 
     async def force_subscribe(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """پیام عضویت اجباری رو نمایش میده"""
         user = update.effective_user
         if not user:
             return
@@ -127,7 +123,6 @@ class SocialLinksBot:
         )
 
     async def handle_callback(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """مدیریت دکمه تایید عضویت"""
         query = update.callback_query
         await query.answer()
 
@@ -191,12 +186,10 @@ class SocialLinksBot:
         if not self._chat_is_allowed(update.effective_chat):
             return
 
-        # ============ چک کردن عضویت ============
         user = update.effective_user
         if user and not await self.is_subscribed(user.id):
             await self.force_subscribe(update, context)
             return
-        # ======================================
 
         host = html.escape(self.mirror_host)
         tt = (
@@ -216,12 +209,10 @@ class SocialLinksBot:
         if not self._chat_is_allowed(update.effective_chat):
             return
 
-        # ============ چک کردن عضویت ============
         user = update.effective_user
         if user and not await self.is_subscribed(user.id):
             await self.force_subscribe(update, context)
             return
-        # ======================================
 
         host = html.escape(self.mirror_host)
         lines = [
@@ -262,12 +253,10 @@ class SocialLinksBot:
         if not self._chat_is_allowed(message.chat):
             return
 
-        # ============ چک کردن عضویت ============
         user = update.effective_user
         if user and not await self.is_subscribed(user.id):
             await self.force_subscribe(update, context)
             return
-        # ======================================
 
         mirror_text, mirrored = replace_instagram_hosts(body, self.mirror_host)
         if mirrored:
