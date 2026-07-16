@@ -100,12 +100,12 @@ def increment_download(user_id):
         users[str(user_id)]['total_downloads'] = users[str(user_id)].get('total_downloads', 0) + 1
         save_users(users)
 
-# ========== کیبورد اصلی با دکمه خرید فیلترشکن ==========
+# ========== کیبورد اصلی ==========
 def main_keyboard():
     markup = types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
-    markup.add("📥 دانلود", "🎵 دانلود صدا")
+    markup.add("📥 دانلود", "🛒 خرید کانفیگ")
     markup.add("👤 حساب من", "⭐ ارتقا به ویژه")
-    markup.add("🛒 خرید فیلترشکن پرسرعت", "📜 راهنما")
+    markup.add("📜 راهنما")
     return markup
 
 # ========== تابع دانلود اینستاگرام و تیک‌تاک ==========
@@ -152,7 +152,7 @@ def send_file(message, filename, user_id):
             "❌ **دانلود ناموفق!**\n\n"
             "📌 برای دانلود از ربات‌های زیر استفاده کنید:\n"
             "🔹 @aria_bot_channle\n\n"
-            "🛒 یا از بخش «خرید فیلترشکن پرسرعت» استفاده کنید.",
+            "🛒 یا از بخش «خرید کانفیگ» استفاده کنید.",
             parse_mode='Markdown'
         )
         return
@@ -166,7 +166,7 @@ def send_file(message, filename, user_id):
                 f"⚠️ حجم فایل {file_size:.1f}MB از حد مجاز ({max_size}MB) بیشتره!\n\n"
                 f"📌 برای دانلود فایل‌های بزرگتر از ربات‌های زیر استفاده کنید:\n"
                 f"🔹 @aria_bot_channle\n\n"
-                f"🛒 یا از بخش «خرید فیلترشکن پرسرعت» استفاده کنید."
+                f"🛒 یا از بخش «خرید کانفیگ» استفاده کنید."
             )
             if os.path.exists(filename):
                 os.remove(filename)
@@ -199,12 +199,12 @@ def send_file(message, filename, user_id):
             f"❌ **خطا در ارسال!**\n\n"
             f"📌 برای دانلود از ربات‌های زیر استفاده کنید:\n"
             f"🔹 @aria_bot_channle\n\n"
-            f"🛒 یا از بخش «خرید فیلترشکن پرسرعت» استفاده کنید."
+            f"🛒 یا از بخش «خرید کانفیگ» استفاده کنید."
         )
         if os.path.exists(filename):
             os.remove(filename)
 
-# ========== دستور پین (فقط ادمین) ==========
+# ========== دستورات ادمین ==========
 @bot.message_handler(commands=['pin'])
 def pin_message(message):
     user_id = message.from_user.id
@@ -212,7 +212,6 @@ def pin_message(message):
         bot.reply_to(message, "⛔ فقط ادمین می‌تونه از این دستور استفاده کنه!")
         return
     
-    # اگه پیام ریپلای شده باشه
     if message.reply_to_message:
         try:
             bot.pin_chat_message(message.chat.id, message.reply_to_message.message_id)
@@ -222,7 +221,6 @@ def pin_message(message):
     else:
         bot.reply_to(message, "❌ لطفاً روی پیامی که می‌خوای پین کنی ریپلای بزن و دوباره /pin رو بفرست.")
 
-# ========== دستور برادکست (فقط ادمین) ==========
 @bot.message_handler(commands=['broadcast'])
 def broadcast_command(message):
     user_id = message.from_user.id
@@ -273,7 +271,7 @@ def start(message):
         f"🎬 **به ربات دانلودر خوش آمدی!**\n\n"
         f"📥 لینک اینستاگرام یا تیک‌تاک رو بفرست.\n"
         f"⭐ وضعیت: {'✅ ویژه' if is_premium(user_id) else '❌ رایگان'}\n\n"
-        f"🛒 برای خرید فیلترشکن پرسرعت از دکمه زیر استفاده کن.\n"
+        f"🛒 برای خرید کانفیگ از دکمه زیر استفاده کن.\n"
         f"📞 پشتیبانی: @hegzosupport",
         reply_markup=main_keyboard()
     )
@@ -283,9 +281,15 @@ def video_cmd(message):
     bot.reply_to(message, "📹 **لینک اینستاگرام یا تیک‌تاک رو بفرست.**")
     bot.register_next_step_handler(message, lambda m: process_link(m))
 
-@bot.message_handler(func=lambda m: m.text == "🎵 دانلود صدا")
-def audio_cmd(message):
-    bot.reply_to(message, "🎵 **این بخش فقط برای یوتیوب فعاله که فعلاً غیرفعاله.**")
+@bot.message_handler(func=lambda m: m.text == "🛒 خرید کانفیگ")
+def buy_config(message):
+    bot.reply_to(message,
+        "🔹 **برای خرید کانفیگ از ربات زیر استفاده کنید:**\n\n"
+        "🤖 @hegzo_vpn_bot\n\n"
+        "📌 این ربات بهترین کانفیگ‌های VPN رو با کیفیت بالا ارائه میده.\n"
+        "💳 پرداخت آسان و پشتیبانی ۲۴ ساعته.\n\n"
+        "📞 پشتیبانی: @hegzosupport"
+    )
 
 @bot.message_handler(func=lambda m: m.text == "👤 حساب من")
 def profile(message):
@@ -324,17 +328,6 @@ def upgrade(message):
         reply_markup=markup
     )
 
-# ========== دکمه خرید فیلترشکن پرسرعت ==========
-@bot.message_handler(func=lambda m: m.text == "🛒 خرید فیلترشکن پرسرعت")
-def buy_vpn(message):
-    bot.reply_to(message,
-        "🔹 **برای خرید فیلترشکن پرسرعت از ربات زیر استفاده کنید:**\n\n"
-        "🤖 @hegzo_vpn_bot\n\n"
-        "📌 این ربات بهترین سرویس‌های VPN رو با کیفیت بالا ارائه میده.\n"
-        "💳 پرداخت آسان و پشتیبانی ۲۴ ساعته.\n\n"
-        "📞 پشتیبانی: @hegzosupport"
-    )
-
 @bot.message_handler(func=lambda m: m.text == "📜 راهنما")
 def help_cmd(message):
     bot.reply_to(message,
@@ -343,7 +336,7 @@ def help_cmd(message):
         "🔹 دانلود خودکار انجام میشه.\n\n"
         "📌 برای دانلود بیشتر از ربات‌های زیر استفاده کنید:\n"
         "🔹 @aria_bot_channle\n\n"
-        "🛒 خرید فیلترشکن پرسرعت: @hegzo_vpn_bot\n"
+        "🛒 خرید کانفیگ: @hegzo_vpn_bot\n"
         "📞 پشتیبانی: @hegzosupport"
     )
 
@@ -368,7 +361,7 @@ def process_link(message):
             f"{msg}\n\n"
             f"📌 برای دانلود بیشتر از ربات‌های زیر استفاده کنید:\n"
             f"🔹 @aria_bot_channle\n\n"
-            f"🛒 یا از بخش «خرید فیلترشکن پرسرعت» استفاده کنید."
+            f"🛒 یا از بخش «خرید کانفیگ» استفاده کنید."
         )
         return
     
@@ -403,7 +396,7 @@ def handle_all(message):
             "📌 فقط لینک اینستاگرام یا تیک‌تاک بفرست.\n\n"
             "📌 برای دانلود بیشتر از ربات‌های زیر استفاده کنید:\n"
             "🔹 @aria_bot_channle\n\n"
-            "🛒 خرید فیلترشکن پرسرعت: @hegzo_vpn_bot",
+            "🛒 خرید کانفیگ: @hegzo_vpn_bot",
             reply_markup=main_keyboard()
         )
 
