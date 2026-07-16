@@ -1,4 +1,5 @@
 import telebot
+from telebot import types
 import os
 import re
 import yt_dlp
@@ -99,12 +100,12 @@ def increment_download(user_id):
         users[str(user_id)]['total_downloads'] = users[str(user_id)].get('total_downloads', 0) + 1
         save_users(users)
 
-# ========== کیبورد ==========
+# ========== کیبورد اصلی ==========
 def main_keyboard():
-    markup = telebot.types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
+    markup = types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
     markup.add("📥 دانلود", "🎵 دانلود صدا")
     markup.add("👤 حساب من", "⭐ ارتقا به ویژه")
-    markup.add("📜 راهنما")
+    markup.add("🛒 خرید فیلترشکن پرسرعت", "📜 راهنما")
     return markup
 
 # ========== تابع دانلود ==========
@@ -156,7 +157,14 @@ def download_media(link, is_audio=False):
 # ========== ارسال فایل ==========
 def send_file(message, filename, user_id):
     if not filename or not os.path.exists(filename):
-        bot.reply_to(message, "❌ دانلود ناموفق!")
+        # ========== پیام خطای دانلود ناموفق ==========
+        bot.reply_to(message, 
+            "❌ **دانلود ناموفق!**\n\n"
+            "📌 برای دانلود از ربات‌های زیر استفاده کنید:\n"
+            "🔹 @aria_bot_channle\n\n"
+            "🛒 همچنین می‌توانید از بخش «خرید فیلترشکن پرسرعت» استفاده کنید.",
+            parse_mode='Markdown'
+        )
         return
     
     try:
@@ -164,8 +172,14 @@ def send_file(message, filename, user_id):
         max_size = PREMIUM_MAX_SIZE_MB if is_premium(user_id) else MAX_FILE_SIZE_MB
         
         if file_size > max_size:
-            bot.reply_to(message, f"⚠️ حجم فایل {file_size:.1f}MB از حد مجاز ({max_size}MB) بیشتره!")
-            os.remove(filename)
+            bot.reply_to(message, 
+                f"⚠️ حجم فایل {file_size:.1f}MB از حد مجاز ({max_size}MB) بیشتره!\n\n"
+                f"📌 برای دانلود فایل‌های بزرگتر از ربات‌های زیر استفاده کنید:\n"
+                f"🔹 @aria_bot_channle\n\n"
+                f"🛒 یا از بخش «خرید فیلترشکن پرسرعت» استفاده کنید."
+            )
+            if os.path.exists(filename):
+                os.remove(filename)
             return
         
         if file_size > 20:
@@ -191,7 +205,12 @@ def send_file(message, filename, user_id):
         increment_download(user_id)
         
     except Exception as e:
-        bot.reply_to(message, f"❌ خطا: {str(e)[:80]}")
+        bot.reply_to(message, 
+            f"❌ **خطا در ارسال!**\n\n"
+            f"📌 برای دانلود از ربات‌های زیر استفاده کنید:\n"
+            f"🔹 @aria_bot_channle\n\n"
+            f"🛒 یا از بخش «خرید فیلترشکن پرسرعت» استفاده کنید."
+        )
         if os.path.exists(filename):
             os.remove(filename)
 
@@ -205,7 +224,8 @@ def start(message):
         f"🎬 **به ربات دانلودر خوش آمدی!**\n\n"
         f"📥 لینک یوتیوب، اینستاگرام یا تیک‌تاک رو بفرست.\n"
         f"⭐ وضعیت: {'✅ ویژه' if is_premium(user_id) else '❌ رایگان'}\n\n"
-        f"پشتیبانی: @hegzosupport",
+        f"🛒 برای خرید فیلترشکن پرسرعت از دکمه زیر استفاده کن.\n"
+        f"📞 پشتیبانی: @hegzosupport",
         reply_markup=main_keyboard()
     )
 
@@ -241,11 +261,11 @@ def upgrade(message):
         bot.reply_to(message, "✅ شما هم‌اکنون ویژه هستید!")
         return
     
-    markup = telebot.types.InlineKeyboardMarkup(row_width=1)
+    markup = types.InlineKeyboardMarkup(row_width=1)
     markup.add(
-        telebot.types.InlineKeyboardButton("📅 ۱ ماهه - ۱۵۰,۰۰۰ تومان", callback_data="buy_1month"),
-        telebot.types.InlineKeyboardButton("📅 ۳ ماهه - ۳۵۰,۰۰۰ تومان", callback_data="buy_3month"),
-        telebot.types.InlineKeyboardButton("📅 ۶ ماهه - ۶۰۰,۰۰۰ تومان", callback_data="buy_6month")
+        types.InlineKeyboardButton("📅 ۱ ماهه - ۱۵۰,۰۰۰ تومان", callback_data="buy_1month"),
+        types.InlineKeyboardButton("📅 ۳ ماهه - ۳۵۰,۰۰۰ تومان", callback_data="buy_3month"),
+        types.InlineKeyboardButton("📅 ۶ ماهه - ۶۰۰,۰۰۰ تومان", callback_data="buy_6month")
     )
     bot.reply_to(message, 
         "⭐ **خرید اشتراک ویژه**\n\n"
@@ -256,17 +276,38 @@ def upgrade(message):
         reply_markup=markup
     )
 
+# ========== دکمه خرید فیلترشکن پرسرعت ==========
+@bot.message_handler(func=lambda m: m.text == "🛒 خرید فیلترشکن پرسرعت")
+def buy_vpn(message):
+    bot.reply_to(message,
+        "🔹 **برای خرید فیلترشکن پرسرعت از ربات زیر استفاده کنید:**\n\n"
+        "🤖 @hegzo_vpn_bot\n\n"
+        "📌 این ربات بهترین سرویس‌های VPN رو با کیفیت بالا ارائه میده.\n"
+        "💳 پرداخت آسان و پشتیبانی ۲۴ ساعته.\n\n"
+        "📞 پشتیبانی: @hegzosupport"
+    )
+
 @bot.message_handler(func=lambda m: m.text == "📜 راهنما")
 def help_cmd(message):
     bot.reply_to(message,
         "📜 **راهنما**\n\n"
-        "لینک رو بفرست، دانلود میشه.\n\n"
-        "پشتیبانی: @hegzosupport"
+        "🔹 لینک یوتیوب/اینستاگرام/تیک‌تاک رو بفرست.\n"
+        "🔹 دانلود خودکار انجام میشه.\n\n"
+        "📌 برای دانلود بیشتر از ربات‌های زیر استفاده کنید:\n"
+        "🔹 @aria_bot_channle\n\n"
+        "🛒 خرید فیلترشکن پرسرعت: @hegzo_vpn_bot\n"
+        "📞 پشتیبانی: @hegzosupport"
     )
 
 @bot.callback_query_handler(func=lambda call: call.data.startswith("buy_"))
 def buy_callback(call):
-    bot.answer_callback_query(call.id, "💰 لطفاً مبلغ رو به کارت زیر واریز کن:\n\n5022291525516892\nاحمد خزایی\nو رسید رو بفرست.", show_alert=True)
+    bot.answer_callback_query(call.id, 
+        "💰 لطفاً مبلغ رو به کارت زیر واریز کن:\n\n"
+        "5022291525516892\n"
+        "احمد خزایی\n\n"
+        "و رسید رو بفرست.",
+        show_alert=True
+    )
 
 # ========== پردازش لینک ==========
 def process_link(message, is_audio):
@@ -275,14 +316,24 @@ def process_link(message, is_audio):
     
     can, msg = can_download(user_id)
     if not can:
-        bot.reply_to(message, msg)
+        bot.reply_to(message, 
+            f"{msg}\n\n"
+            f"📌 برای دانلود بیشتر از ربات‌های زیر استفاده کنید:\n"
+            f"🔹 @aria_bot_channle\n\n"
+            f"🛒 یا از بخش «خرید فیلترشکن پرسرعت» استفاده کنید."
+        )
         return
     
     pattern = r'(https?://(?:www\.)?(?:youtube\.com|youtu\.be|instagram\.com|tiktok\.com)/[\w\-/?=&]+)'
     match = re.search(pattern, text)
     
     if not match:
-        bot.reply_to(message, "❌ لینک معتبر نیست!")
+        bot.reply_to(message, 
+            "❌ **لینک معتبر نیست!**\n\n"
+            "📌 لینک یوتیوب، اینستاگرام یا تیک‌تاک بفرست.\n\n"
+            f"📌 برای دانلود بیشتر از ربات‌های زیر استفاده کنید:\n"
+            f"🔹 @aria_bot_channle"
+        )
         return
     
     link = match.group(1)
@@ -299,7 +350,14 @@ def handle_all(message):
     if re.search(pattern, text):
         process_link(message, False)
     else:
-        bot.reply_to(message, "لینک یوتیوب، اینستاگرام یا تیک‌تاک بفرست.", reply_markup=main_keyboard())
+        bot.reply_to(message, 
+            "❌ **لینک معتبر نیست!**\n\n"
+            "📌 لینک یوتیوب، اینستاگرام یا تیک‌تاک بفرست.\n\n"
+            "📌 برای دانلود بیشتر از ربات‌های زیر استفاده کنید:\n"
+            "🔹 @aria_bot_channle\n\n"
+            "🛒 خرید فیلترشکن پرسرعت: @hegzo_vpn_bot",
+            reply_markup=main_keyboard()
+        )
 
 # ========== اجرا ==========
 if __name__ == '__main__':
