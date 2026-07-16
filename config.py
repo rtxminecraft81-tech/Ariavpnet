@@ -13,7 +13,7 @@ app = Flask(__name__)
 
 @app.route('/')
 def home():
-    return "🤖 Multi Downloader Bot is running!", 200
+    return "🤖 Downloader Bot is running!", 200
 
 @app.route('/download/<filename>')
 def download_file(filename):
@@ -108,40 +108,26 @@ def main_keyboard():
     markup.add("🛒 خرید فیلترشکن پرسرعت", "📜 راهنما")
     return markup
 
-# ========== تابع دانلود با کوکی ==========
-def download_media(link, is_audio=False):
+# ========== تابع دانلود اینستاگرام و تیک‌تاک ==========
+def download_media(link):
     try:
         if not os.path.exists('downloads'):
             os.makedirs('downloads')
         
-        # ========== تنظیمات yt-dlp با کوکی ==========
+        # ========== تنظیمات yt-dlp برای اینستاگرام و تیک‌تاک ==========
         ydl_opts = {
             'outtmpl': 'downloads/%(title)s_%(id)s.%(ext)s',
             'quiet': True,
             'no_warnings': True,
             'ignoreerrors': True,
             'no_check_certificate': True,
-            'cookiefile': 'cookies.txt',  # <-- کوکی برای یوتیوب و اینستاگرام
-            'format': 'bestvideo[height<=720]+bestaudio/best[height<=720]' if not is_audio else 'bestaudio/best',
+            'format': 'best',
             'merge_output_format': 'mp4',
-            'postprocessors': [{
-                'key': 'FFmpegVideoConvertor',
-                'preferedformat': 'mp4',
-            }] if not is_audio else [{
-                'key': 'FFmpegExtractAudio',
-                'preferredcodec': 'mp3',
-                'preferredquality': '192',
-            }],
             'headers': {
                 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
             },
             'nocheckcertificate': True,
             'geo_bypass': True,
-            'extractor_args': {
-                'youtube': {
-                    'skip': ['hls', 'dash'],
-                }
-            }
         }
         
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
@@ -167,7 +153,7 @@ def send_file(message, filename, user_id):
             "❌ **دانلود ناموفق!**\n\n"
             "📌 برای دانلود از ربات‌های زیر استفاده کنید:\n"
             "🔹 @aria_bot_channle\n\n"
-            "🛒 همچنین می‌توانید از بخش «خرید فیلترشکن پرسرعت» استفاده کنید.",
+            "🛒 یا از بخش «خرید فیلترشکن پرسرعت» استفاده کنید.",
             parse_mode='Markdown'
         )
         return
@@ -227,7 +213,7 @@ def start(message):
     
     bot.reply_to(message, 
         f"🎬 **به ربات دانلودر خوش آمدی!**\n\n"
-        f"📥 لینک یوتیوب، اینستاگرام یا تیک‌تاک رو بفرست.\n"
+        f"📥 لینک اینستاگرام یا تیک‌تاک رو بفرست.\n"
         f"⭐ وضعیت: {'✅ ویژه' if is_premium(user_id) else '❌ رایگان'}\n\n"
         f"🛒 برای خرید فیلترشکن پرسرعت از دکمه زیر استفاده کن.\n"
         f"📞 پشتیبانی: @hegzosupport",
@@ -236,13 +222,12 @@ def start(message):
 
 @bot.message_handler(func=lambda m: m.text == "📥 دانلود")
 def video_cmd(message):
-    bot.reply_to(message, "📹 **لینک رو بفرست.**")
-    bot.register_next_step_handler(message, lambda m: process_link(m, False))
+    bot.reply_to(message, "📹 **لینک اینستاگرام یا تیک‌تاک رو بفرست.**")
+    bot.register_next_step_handler(message, lambda m: process_link(m))
 
 @bot.message_handler(func=lambda m: m.text == "🎵 دانلود صدا")
 def audio_cmd(message):
-    bot.reply_to(message, "🎵 **لینک یوتیوب رو بفرست.**")
-    bot.register_next_step_handler(message, lambda m: process_link(m, True))
+    bot.reply_to(message, "🎵 **این بخش فقط برای یوتیوب فعاله که فعلاً غیرفعاله.**")
 
 @bot.message_handler(func=lambda m: m.text == "👤 حساب من")
 def profile(message):
@@ -295,7 +280,7 @@ def buy_vpn(message):
 def help_cmd(message):
     bot.reply_to(message,
         "📜 **راهنما**\n\n"
-        "🔹 لینک یوتیوب/اینستاگرام/تیک‌تاک رو بفرست.\n"
+        "🔹 لینک اینستاگرام یا تیک‌تاک رو بفرست.\n"
         "🔹 دانلود خودکار انجام میشه.\n\n"
         "📌 برای دانلود بیشتر از ربات‌های زیر استفاده کنید:\n"
         "🔹 @aria_bot_channle\n\n"
@@ -314,7 +299,7 @@ def buy_callback(call):
     )
 
 # ========== پردازش لینک ==========
-def process_link(message, is_audio):
+def process_link(message):
     user_id = message.from_user.id
     text = message.text
     
@@ -328,14 +313,15 @@ def process_link(message, is_audio):
         )
         return
     
-    pattern = r'(https?://(?:www\.)?(?:youtube\.com|youtu\.be|instagram\.com|tiktok\.com)/[\w\-/?=&]+)'
+    # ========== فقط اینستاگرام و تیک‌تاک ==========
+    pattern = r'(https?://(?:www\.)?(?:instagram\.com|tiktok\.com)/[\w\-/?=&]+)'
     match = re.search(pattern, text)
     
     if not match:
         bot.reply_to(message, 
             "❌ **لینک معتبر نیست!**\n\n"
-            "📌 لینک یوتیوب، اینستاگرام یا تیک‌تاک بفرست.\n\n"
-            f"📌 برای دانلود بیشتر از ربات‌های زیر استفاده کنید:\n"
+            "📌 فقط لینک اینستاگرام یا تیک‌تاک پشتیبانی میشه.\n\n"
+            f"📌 برای دانلود از ربات‌های زیر استفاده کنید:\n"
             f"🔹 @aria_bot_channle"
         )
         return
@@ -343,20 +329,20 @@ def process_link(message, is_audio):
     link = match.group(1)
     bot.reply_to(message, "⏳ در حال دانلود...")
     
-    filename = download_media(link, is_audio)
+    filename = download_media(link)
     send_file(message, filename, user_id)
 
 # ========== پیام‌های عادی ==========
 @bot.message_handler(func=lambda m: True)
 def handle_all(message):
     text = message.text
-    pattern = r'(https?://(?:www\.)?(?:youtube\.com|youtu\.be|instagram\.com|tiktok\.com)/[\w\-/?=&]+)'
+    pattern = r'(https?://(?:www\.)?(?:instagram\.com|tiktok\.com)/[\w\-/?=&]+)'
     if re.search(pattern, text):
-        process_link(message, False)
+        process_link(message)
     else:
         bot.reply_to(message, 
             "❌ **لینک معتبر نیست!**\n\n"
-            "📌 لینک یوتیوب، اینستاگرام یا تیک‌تاک بفرست.\n\n"
+            "📌 فقط لینک اینستاگرام یا تیک‌تاک بفرست.\n\n"
             "📌 برای دانلود بیشتر از ربات‌های زیر استفاده کنید:\n"
             "🔹 @aria_bot_channle\n\n"
             "🛒 خرید فیلترشکن پرسرعت: @hegzo_vpn_bot",
@@ -370,7 +356,7 @@ if __name__ == '__main__':
     if not os.path.exists('downloads'):
         os.makedirs('downloads')
     
-    print("🤖 ربات چندمنظوره با پشتیبانی از کوکی روشن شد!")
+    print("🤖 ربات دانلودر اینستاگرام و تیک‌تاک روشن شد!")
     
     try:
         bot.remove_webhook()
