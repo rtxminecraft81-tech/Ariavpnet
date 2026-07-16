@@ -100,7 +100,7 @@ def increment_download(user_id):
         users[str(user_id)]['total_downloads'] = users[str(user_id)].get('total_downloads', 0) + 1
         save_users(users)
 
-# ========== کیبورد اصلی ==========
+# ========== کیبورد اصلی با دکمه خرید فیلترشکن ==========
 def main_keyboard():
     markup = types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
     markup.add("📥 دانلود", "🎵 دانلود صدا")
@@ -114,7 +114,6 @@ def download_media(link):
         if not os.path.exists('downloads'):
             os.makedirs('downloads')
         
-        # ========== تنظیمات yt-dlp برای اینستاگرام و تیک‌تاک ==========
         ydl_opts = {
             'outtmpl': 'downloads/%(title)s_%(id)s.%(ext)s',
             'quiet': True,
@@ -205,6 +204,65 @@ def send_file(message, filename, user_id):
         if os.path.exists(filename):
             os.remove(filename)
 
+# ========== دستور پین (فقط ادمین) ==========
+@bot.message_handler(commands=['pin'])
+def pin_message(message):
+    user_id = message.from_user.id
+    if user_id != ADMIN_ID:
+        bot.reply_to(message, "⛔ فقط ادمین می‌تونه از این دستور استفاده کنه!")
+        return
+    
+    # اگه پیام ریپلای شده باشه
+    if message.reply_to_message:
+        try:
+            bot.pin_chat_message(message.chat.id, message.reply_to_message.message_id)
+            bot.reply_to(message, "✅ پیام با موفقیت پین شد!")
+        except Exception as e:
+            bot.reply_to(message, f"❌ خطا در پین کردن: {str(e)}")
+    else:
+        bot.reply_to(message, "❌ لطفاً روی پیامی که می‌خوای پین کنی ریپلای بزن و دوباره /pin رو بفرست.")
+
+# ========== دستور برادکست (فقط ادمین) ==========
+@bot.message_handler(commands=['broadcast'])
+def broadcast_command(message):
+    user_id = message.from_user.id
+    if user_id != ADMIN_ID:
+        bot.reply_to(message, "⛔ فقط ادمین می‌تونه از این دستور استفاده کنه!")
+        return
+    
+    bot.reply_to(message, "📢 **لطفاً پیام خود را بفرستید.**")
+    bot.register_next_step_handler(message, broadcast_send)
+
+def broadcast_send(message):
+    user_id = message.from_user.id
+    if user_id != ADMIN_ID:
+        return
+    
+    msg = message.text
+    if not msg:
+        bot.reply_to(message, "❌ لطفاً یک پیام متنی بفرست.")
+        return
+    
+    users = load_users()
+    success = 0
+    fail = 0
+    
+    bot.reply_to(message, f"⏳ در حال ارسال به {len(users)} کاربر...")
+    
+    for uid in users.keys():
+        try:
+            bot.send_message(int(uid), f"📢 **پیام از طرف ادمین:**\n\n{msg}", parse_mode='Markdown')
+            success += 1
+            time.sleep(0.05)
+        except:
+            fail += 1
+    
+    bot.reply_to(message, 
+        f"✅ **برادکست انجام شد!**\n\n"
+        f"✅ موفق: {success}\n"
+        f"❌ ناموفق: {fail}"
+    )
+
 # ========== دستورات ==========
 @bot.message_handler(commands=['start'])
 def start(message):
@@ -266,6 +324,7 @@ def upgrade(message):
         reply_markup=markup
     )
 
+# ========== دکمه خرید فیلترشکن پرسرعت ==========
 @bot.message_handler(func=lambda m: m.text == "🛒 خرید فیلترشکن پرسرعت")
 def buy_vpn(message):
     bot.reply_to(message,
@@ -313,7 +372,6 @@ def process_link(message):
         )
         return
     
-    # ========== فقط اینستاگرام و تیک‌تاک ==========
     pattern = r'(https?://(?:www\.)?(?:instagram\.com|tiktok\.com)/[\w\-/?=&]+)'
     match = re.search(pattern, text)
     
@@ -357,6 +415,7 @@ if __name__ == '__main__':
         os.makedirs('downloads')
     
     print("🤖 ربات دانلودر اینستاگرام و تیک‌تاک روشن شد!")
+    print(f"👑 ادمین: {ADMIN_ID}")
     
     try:
         bot.remove_webhook()
