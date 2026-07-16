@@ -1,6 +1,6 @@
 .env
 __pycache__/
+*.pyc
 downloads/
 users.json
-banned_users.json
-*.pyc
+*.db
