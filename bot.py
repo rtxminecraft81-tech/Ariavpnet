@@ -172,8 +172,6 @@ def download_youtube(link, is_audio=False):
 # ========== تابع دانلود اینستاگرام ==========
 def download_instagram(link):
     try:
-        import yt_dlp
-        
         if not os.path.exists('downloads'):
             os.makedirs('downloads')
         
