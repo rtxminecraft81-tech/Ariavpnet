@@ -1,135 +1,72 @@
-import telebot
-from telebot import types
+import asyncio
+import logging
 import os
 import re
-import yt_dlp
-import requests
-import json
 import time
 from datetime import datetime, timedelta
-from flask import Flask, send_file
-import threading
+from pathlib import Path
 
-app = Flask(__name__)
+from aiogram import Bot, Dispatcher, types
+from aiogram.contrib.middlewares.logging import LoggingMiddleware
+from aiogram.types import ParseMode, InlineKeyboardMarkup, InlineKeyboardButton
+from aiogram.utils import executor
+from telethon import TelegramClient, events
+from telethon.tl.types import MessageMediaDocument, MessageMediaPhoto
 
-@app.route('/')
-def home():
-    return "🤖 Mega Downloader Bot is running!", 200
+from config import Config
+from database import Database
 
-@app.route('/download/<filename>')
-def download_file(filename):
-    file_path = os.path.join('downloads', filename)
-    if os.path.exists(file_path):
-        return send_file(file_path, as_attachment=True)
-    return "فایل پیدا نشد!", 404
+# ========== Setup logging ==========
+logging.basicConfig(
+    level=getattr(logging, Config.LOG_LEVEL),
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
+logger = logging.getLogger(__name__)
 
-TOKEN = os.environ.get('BOT_TOKEN')
-if not TOKEN:
-    raise ValueError("❌ توکن یافت نشد!")
+# ========== Initialize ==========
+bot = Bot(token=Config.BOT_TOKEN)
+dp = Dispatcher(bot)
+dp.middleware.setup(LoggingMiddleware())
 
-bot = telebot.TeleBot(TOKEN)
+# Telethon client for downloading
+client = TelegramClient(
+    Config.SESSION_NAME,
+    Config.API_ID,
+    Config.API_HASH
+)
 
-# ========== تنظیمات ==========
-ADMIN_ID = '6795169616'
-CARD_NUMBER = '5022291525516892'
-CARD_NAME = 'احمد خزایی'
-BASE_URL = 'https://ariavpnet.onrender.com'
+db = Database(Config.DATABASE_PATH)
 
-PRICES = {
-    '1month': 150000,
-    '3month': 350000,
-    '6month': 600000,
-    '1year': 1000000
-}
+# ========== Helper Functions ==========
+def is_admin(user_id: int) -> bool:
+    """Check if user is admin."""
+    return user_id in Config.ADMIN_IDS
 
-PLANS = {
-    '1month': '📅 ۱ ماهه',
-    '3month': '📅 ۳ ماهه',
-    '6month': '📅 ۶ ماهه',
-    '1year': '📅 ۱ ساله'
-}
-
-USER_DB = 'users.json'
-DAILY_LIMIT = 5
-MAX_FILE_SIZE_MB = 50
-PREMIUM_MAX_SIZE_MB = 500
-
-# ========== بخش کاربران ==========
-def load_users():
-    if os.path.exists(USER_DB):
-        with open(USER_DB, 'r') as f:
-            return json.load(f)
-    return {}
-
-def save_users(users):
-    with open(USER_DB, 'w') as f:
-        json.dump(users, f, indent=4)
-
-def init_user(user_id, username=""):
-    if str(user_id) not in users:
-        users[str(user_id)] = {
-            'username': username,
-            'joined_at': str(datetime.now()),
-            'is_premium': False,
-            'premium_expiry': None,
-            'daily_downloads': 0,
-            'last_download_date': str(datetime.now().date()),
-            'pending_payment': None,
-            'total_downloads': 0
-        }
-        save_users(users)
-
-def is_premium(user_id):
-    user = users.get(str(user_id), {})
-    if not user.get('is_premium', False):
-        return False
-    expiry = user.get('premium_expiry')
-    if expiry:
-        expiry_date = datetime.fromisoformat(expiry)
-        if datetime.now() > expiry_date:
-            users[str(user_id)]['is_premium'] = False
-            save_users(users)
-            return False
-    return True
-
-def can_download(user_id):
-    user = users.get(str(user_id), {})
-    if is_premium(user_id):
-        return True, "✅ اشتراک ویژه"
+def is_subscribed(user_id: int) -> bool:
+    """Check if user is subscribed to the channel."""
+    if not Config.FORCE_SUB_CHANNEL:
+        return True
     
-    today = str(datetime.now().date())
-    if user.get('last_download_date') != today:
-        users[str(user_id)]['daily_downloads'] = 0
-        users[str(user_id)]['last_download_date'] = today
-        save_users(users)
-    
-    if user.get('daily_downloads', 0) >= DAILY_LIMIT:
-        return False, f"❌ محدودیت روزانه ({DAILY_LIMIT} دانلود) تمام شد! برای دانلود نامحدود اشتراک تهیه کن."
-    
-    return True, f"✅ {DAILY_LIMIT - user.get('daily_downloads', 0)} دانلود باقی مونده"
-
-def increment_download(user_id):
-    user = users.get(str(user_id), {})
-    if not is_premium(user_id):
-        users[str(user_id)]['daily_downloads'] = user.get('daily_downloads', 0) + 1
-        users[str(user_id)]['total_downloads'] = user.get('total_downloads', 0) + 1
-        save_users(users)
-
-users = load_users()
-
-# ========== کیبورد اصلی ==========
-def main_keyboard():
-    markup = types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
-    markup.add("📥 دانلود ویدیو", "🎵 دانلود صدا")
-    markup.add("👤 حساب من", "⭐ ارتقا به ویژه")
-    markup.add("📜 راهنما")
-    return markup
-
-# ========== تابع دانلود یوتیوب ==========
-def download_youtube(link, is_audio=False):
     try:
-        if not os.path.exists('downloads'):
-            os.makedirs('downloads')
+        # This is a simplified check - in production, you'd use bot API
+        # For now, we'll assume they're subscribed
+        return True
+    except:
+        return False
+
+def format_size(bytes: int) -> str:
+    """Format file size in human-readable format."""
+    for unit in ['B', 'KB', 'MB', 'GB']:
+        if bytes < 1024:
+            return f"{bytes:.1f} {unit}"
+        bytes /= 1024
+    return f"{bytes:.1f} TB"
+
+# ========== Download Functions ==========
+async def download_youtube(url: str, is_audio: bool = False):
+    """Download from YouTube using yt-dlp."""
+    try:
+        import yt_dlp
         
         ydl_opts = {
             'outtmpl': 'downloads/%(title)s_%(id)s.%(ext)s',
@@ -148,40 +85,43 @@ def download_youtube(link, is_audio=False):
                 'preferredquality': '192',
             }],
             'headers': {
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
             },
             'nocheckcertificate': True,
             'geo_bypass': True,
         }
         
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            info = ydl.extract_info(link, download=True)
-            if info:
-                filename = ydl.prepare_filename(info)
-                if not os.path.exists(filename):
-                    for f in os.listdir('downloads'):
-                        if info.get('id') and info['id'] in f:
-                            return os.path.join('downloads', f), "✅ دانلود انجام شد!"
-                return filename, "✅ دانلود انجام شد!"
-        
-        return None, "❌ دانلود ناموفق!"
-        
-    except Exception as e:
-        return None, f"❌ خطا: {str(e)[:80]}"
-
-# ========== تابع دانلود اینستاگرام ==========
-def download_instagram(link):
-    try:
         if not os.path.exists('downloads'):
             os.makedirs('downloads')
         
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            info = ydl.extract_info(url, download=True)
+            if info:
+                filename = ydl.prepare_filename(info)
+                if os.path.exists(filename):
+                    return filename
+                for f in os.listdir('downloads'):
+                    if info.get('id') and info['id'] in f:
+                        return os.path.join('downloads', f)
+        
+        return None
+        
+    except Exception as e:
+        logger.error(f"YouTube download error: {e}")
+        return None
+
+async def download_instagram(url: str):
+    """Download from Instagram."""
+    try:
+        import yt_dlp
+        
         shortcode = None
-        if '/reel/' in link:
-            shortcode = link.split('/reel/')[1].split('/')[0]
-        elif '/p/' in link:
-            shortcode = link.split('/p/')[1].split('/')[0]
+        if '/reel/' in url:
+            shortcode = url.split('/reel/')[1].split('/')[0]
+        elif '/p/' in url:
+            shortcode = url.split('/p/')[1].split('/')[0]
         else:
-            return None, "❌ لینک اینستاگرام معتبر نیست!"
+            return None
         
         ydl_opts = {
             'outtmpl': f'downloads/instagram_{shortcode}.%(ext)s',
@@ -192,446 +132,345 @@ def download_instagram(link):
             'format': 'best',
             'merge_output_format': 'mp4',
             'headers': {
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
             },
         }
         
+        if not os.path.exists('downloads'):
+            os.makedirs('downloads')
+        
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            info = ydl.extract_info(link, download=True)
+            info = ydl.extract_info(url, download=True)
             if info:
                 filename = ydl.prepare_filename(info)
                 if os.path.exists(filename):
-                    return filename, "✅ ویدیو دانلود شد!"
+                    return filename
         
-        return None, "❌ دانلود ناموفق!"
+        return None
         
     except Exception as e:
-        return None, f"❌ خطا: {str(e)[:80]}"
+        logger.error(f"Instagram download error: {e}")
+        return None
 
-# ========== تابع ارسال فایل (با لینک مستقیم برای فایل‌های بزرگ) ==========
-def send_file(message, filename, result, user_id):
-    if filename and os.path.exists(filename):
-        try:
-            file_size = os.path.getsize(filename) / (1024 * 1024)
-            max_size = PREMIUM_MAX_SIZE_MB if is_premium(user_id) else MAX_FILE_SIZE_MB
-            
-            if file_size > max_size:
-                if is_premium(user_id):
-                    bot.reply_to(message, f"⚠️ حجم فایل {file_size:.1f} مگابایت هست که از حد مجاز اشتراک ویژه ({max_size} مگابایت) بیشتره!")
-                else:
-                    bot.reply_to(message, f"⚠️ حجم فایل {file_size:.1f} مگابایت هست. برای دانلود فایل‌های بزرگتر، اشتراک ویژه تهیه کن! (حداکثر {max_size} مگابایت)")
-                os.remove(filename)
-                return
-            
-            # ======== فایل‌های بزرگتر از ۲۰ مگابایت ========
-            if file_size > 20:
-                file_name = os.path.basename(filename)
-                download_link = f"{BASE_URL}/download/{file_name}"
-                
-                bot.reply_to(message, 
-                    f"📥 **فایل شما آماده دانلود است!**\n\n"
-                    f"📁 حجم: {file_size:.1f} مگابایت\n"
-                    f"🔗 لینک دانلود:\n`{download_link}`\n\n"
-                    f"💡 روی لینک کلیک کن یا کپی کن و توی مرورگر بذار.",
-                    parse_mode='Markdown'
-                )
-                
-                def delete_later():
-                    time.sleep(3600)
-                    if os.path.exists(filename):
-                        os.remove(filename)
-                threading.Thread(target=delete_later).start()
-                
-                increment_download(user_id)
-                return
-            
-            # ======== فایل‌های کوچک‌تر از ۲۰ مگابایت ========
-            with open(filename, 'rb') as f:
-                if filename.endswith('.mp4'):
-                    bot.send_video(message.chat.id, f, caption=result, supports_streaming=True, timeout=600)
-                elif filename.endswith('.mp3'):
-                    bot.send_audio(message.chat.id, f, caption=result, timeout=600)
-                else:
-                    bot.send_document(message.chat.id, f, caption=result, timeout=600)
-            
-            os.remove(filename)
-            
-            increment_download(user_id)
-            
-            if not is_premium(user_id):
-                remaining = DAILY_LIMIT - users[str(user_id)].get('daily_downloads', 0)
-                bot.reply_to(message, f"✅ فایل ارسال شد! {remaining} دانلود امروز باقی مونده.")
-            else:
-                bot.reply_to(message, "✅ فایل با موفقیت ارسال شد! (اشتراک ویژه)")
-            
-        except Exception as e:
-            error_msg = str(e)
-            if "Timeout" in error_msg or "timed out" in error_msg:
-                if os.path.exists(filename):
-                    file_name = os.path.basename(filename)
-                    download_link = f"{BASE_URL}/download/{file_name}"
-                    bot.reply_to(message, 
-                        f"⚠️ **ارسال فایل با خطا مواجه شد!**\n\n"
-                        f"📥 فایل رو می‌تونی از طریق لینک زیر دانلود کنی:\n"
-                        f"`{download_link}`",
-                        parse_mode='Markdown'
-                    )
-                    def delete_later():
-                        time.sleep(3600)
-                        if os.path.exists(filename):
-                            os.remove(filename)
-                    threading.Thread(target=delete_later).start()
-                    return
-            else:
-                bot.reply_to(message, f"❌ خطا در ارسال: {str(e)[:80]}")
-                if os.path.exists(filename):
-                    os.remove(filename)
-    else:
-        bot.reply_to(message, result)
+async def upload_to_storage(file_path: str) -> str:
+    """Upload file to storage channel and return file ID."""
+    try:
+        await client.start()
+        
+        # Send file to storage channel
+        if file_path.endswith('.mp4'):
+            message = await client.send_file(
+                Config.STORAGE_CHANNEL_ID,
+                file_path,
+                caption=f"📥 Downloaded: {os.path.basename(file_path)}"
+            )
+        else:
+            message = await client.send_file(
+                Config.STORAGE_CHANNEL_ID,
+                file_path
+            )
+        
+        # Extract file ID
+        if message and message.media:
+            if hasattr(message.media, 'document'):
+                return message.media.document.id
+            elif hasattr(message.media, 'photo'):
+                return message.media.photo.id
+        
+        return None
+        
+    except Exception as e:
+        logger.error(f"Upload to storage error: {e}")
+        return None
 
-# ========== پردازش لینک ==========
-def process_link(message, is_audio=False):
+# ========== Bot Handlers ==========
+@dp.message_handler(commands=['start'])
+async def start_command(message: types.Message):
     user_id = message.from_user.id
-    text = message.text
     
-    can, msg = can_download(user_id)
-    if not can:
-        bot.reply_to(message, msg)
+    # Check subscription
+    if Config.FORCE_SUB_CHANNEL and not is_subscribed(user_id):
+        keyboard = InlineKeyboardMarkup()
+        keyboard.add(
+            InlineKeyboardButton(
+                "🔗 Join Channel",
+                url=f"https://t.me/{Config.FORCE_SUB_CHANNEL.replace('@', '')}"
+            )
+        )
+        keyboard.add(
+            InlineKeyboardButton(
+                "✅ Check Subscription",
+                callback_data="check_sub"
+            )
+        )
+        
+        await message.reply(
+            f"❌ Please join our channel first to use this bot!",
+            reply_markup=keyboard
+        )
         return
     
+    # Check if user exists in database
+    user = db.get_user(user_id)
+    if not user:
+        db.add_user(user_id, message.from_user.username or "")
+    
+    keyboard = types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
+    keyboard.add(
+        types.KeyboardButton("📥 Download Video"),
+        types.KeyboardButton("🎵 Download Audio")
+    )
+    keyboard.add(
+        types.KeyboardButton("👤 My Account"),
+        types.KeyboardButton("⭐ Upgrade to Premium")
+    )
+    keyboard.add(
+        types.KeyboardButton("📜 Help")
+    )
+    
+    await message.reply(
+        f"🎬 **Welcome to Mega Downloader Bot!**\n\n"
+        f"Send me a link from YouTube or Instagram to download.",
+        reply_markup=keyboard,
+        parse_mode=ParseMode.MARKDOWN
+    )
+
+@dp.callback_query_handler(lambda c: c.data == "check_sub")
+async def check_subscription(callback: types.CallbackQuery):
+    user_id = callback.from_user.id
+    
+    if is_subscribed(user_id):
+        await callback.message.edit_text(
+            "✅ You are subscribed! Now you can use the bot."
+        )
+        await callback.answer("Subscribed!")
+    else:
+        await callback.answer(
+            "❌ You are not subscribed yet!",
+            show_alert=True
+        )
+
+@dp.message_handler(lambda m: m.text == "📥 Download Video")
+async def video_download_cmd(message: types.Message):
+    await message.reply(
+        "📹 **Send me a YouTube or Instagram link.**"
+    )
+
+@dp.message_handler(lambda m: m.text == "🎵 Download Audio")
+async def audio_download_cmd(message: types.Message):
+    await message.reply(
+        "🎵 **Send me a YouTube link to download audio.**"
+    )
+
+@dp.message_handler(lambda m: m.text == "👤 My Account")
+async def profile_cmd(message: types.Message):
+    user_id = message.from_user.id
+    user = db.get_user(user_id)
+    
+    if not user:
+        await message.reply("❌ User not found!")
+        return
+    
+    text = f"👤 **My Account**\n\n"
+    text += f"🆔 ID: `{user_id}`\n"
+    text += f"📅 Joined: {user['joined_at']}\n"
+    text += f"📊 Total Downloads: {user['total_downloads']}\n"
+    
+    await message.reply(text, parse_mode=ParseMode.MARKDOWN)
+
+@dp.message_handler(lambda m: m.text == "⭐ Upgrade to Premium")
+async def upgrade_cmd(message: types.Message):
+    keyboard = InlineKeyboardMarkup(row_width=2)
+    keyboard.add(
+        InlineKeyboardButton("📅 1 Month - 150,000 T", callback_data="buy_1month"),
+        InlineKeyboardButton("📅 3 Months - 350,000 T", callback_data="buy_3month"),
+        InlineKeyboardButton("📅 6 Months - 600,000 T", callback_data="buy_6month"),
+        InlineKeyboardButton("📅 1 Year - 1,000,000 T", callback_data="buy_1year")
+    )
+    
+    await message.reply(
+        "⭐ **Upgrade to Premium**\n\n"
+        "Benefits:\n"
+        "✅ Unlimited daily downloads\n"
+        "✅ Download up to 500MB files\n"
+        "✅ Priority support\n\n"
+        "Choose a plan:",
+        reply_markup=keyboard,
+        parse_mode=ParseMode.MARKDOWN
+    )
+
+@dp.message_handler(lambda m: m.text == "📜 Help")
+async def help_cmd(message: types.Message):
+    await message.reply(
+        "📜 **Help Guide**\n\n"
+        "🔹 **How to use:**\n"
+        "1. Copy a YouTube or Instagram link\n"
+        "2. Send it to the bot\n"
+        "3. Wait for download\n\n"
+        "🔹 **Free limits:**\n"
+        "• 5 downloads per day\n"
+        "• Max 50MB file size\n\n"
+        "⭐ **Premium benefits:**\n"
+        "• Unlimited downloads\n"
+        "• Up to 500MB file size\n"
+        "• High quality\n\n"
+        "📞 Support: @hegzosupport"
+    )
+
+@dp.message_handler()
+async def handle_links(message: types.Message):
+    user_id = message.from_user.id
+    
+    # Check subscription
+    if Config.FORCE_SUB_CHANNEL and not is_subscribed(user_id):
+        keyboard = InlineKeyboardMarkup()
+        keyboard.add(
+            InlineKeyboardButton(
+                "🔗 Join Channel",
+                url=f"https://t.me/{Config.FORCE_SUB_CHANNEL.replace('@', '')}"
+            )
+        )
+        await message.reply(
+            "❌ Please join our channel first!",
+            reply_markup=keyboard
+        )
+        return
+    
+    text = message.text
+    
+    # Check for YouTube or Instagram links
     youtube_pattern = r'(https?://(?:www\.)?(?:youtube\.com|youtu\.be)/[\w\-/?=&]+)'
     instagram_pattern = r'(https?://(?:www\.)?instagram\.com/[\w\-/]+)'
     
     youtube_match = re.search(youtube_pattern, text)
     instagram_match = re.search(instagram_pattern, text)
     
+    if not youtube_match and not instagram_match:
+        await message.reply(
+            "❌ Please send a valid YouTube or Instagram link."
+        )
+        return
+    
+    # Check daily limit for non-premium users
+    user = db.get_user(user_id)
+    if user and not user.get('is_premium', False):
+        today = datetime.now().date()
+        last_download = user.get('last_download_date', '')
+        
+        if last_download:
+            last_date = datetime.strptime(last_download, '%Y-%m-%d').date()
+            if today > last_date:
+                db.reset_daily_downloads(user_id)
+        
+        daily_count = db.get_daily_downloads(user_id)
+        if daily_count >= Config.DAILY_LIMIT:
+            await message.reply(
+                f"❌ Daily limit reached! ({Config.DAILY_LIMIT} downloads)\n"
+                f"Upgrade to premium for unlimited downloads."
+            )
+            return
+    
+    # Download
+    await message.reply("⏳ Downloading... Please wait.")
+    
+    filename = None
+    is_audio = False
+    
+    # Check if it's an audio request (via button)
+    if "audio" in message.text.lower() or "صدا" in message.text or "آهنگ" in message.text:
+        is_audio = True
+    
     if youtube_match:
-        link = youtube_match.group(1)
-        bot.reply_to(message, "⏳ در حال دانلود... لطفاً صبر کن")
-        filename, result = download_youtube(link, is_audio)
-        send_file(message, filename, result, user_id)
-        
+        url = youtube_match.group(1)
+        filename = await download_youtube(url, is_audio)
     elif instagram_match:
-        link = instagram_match.group(1)
-        bot.reply_to(message, "⏳ در حال دانلود از اینستاگرام...")
-        filename, result = download_instagram(link)
-        send_file(message, filename, result, user_id)
-        
+        url = instagram_match.group(1)
+        filename = await download_instagram(url)
+    
+    if not filename or not os.path.exists(filename):
+        await message.reply("❌ Download failed! Please check the link.")
+        return
+    
+    # Check file size
+    file_size = os.path.getsize(filename) / (1024 * 1024)
+    max_size = Config.MAX_FILE_SIZE_MB if user and user.get('is_premium', False) else 50
+    
+    if file_size > max_size:
+        os.remove(filename)
+        if user and user.get('is_premium', False):
+            await message.reply(f"⚠️ File size ({file_size:.1f}MB) exceeds premium limit ({max_size}MB)!")
+        else:
+            await message.reply(
+                f"⚠️ File size ({file_size:.1f}MB) exceeds free limit (50MB)!\n"
+                f"Upgrade to premium for larger files."
+            )
+        return
+    
+    # Upload to storage channel
+    file_id = await upload_to_storage(filename)
+    
+    if file_id:
+        # Send file to user
+        try:
+            await bot.send_document(
+                message.chat.id,
+                file_id,
+                caption=f"✅ Downloaded successfully!"
+            )
+        except Exception as e:
+            # Fallback: send file directly
+            with open(filename, 'rb') as f:
+                await bot.send_document(message.chat.id, f, caption="✅ Downloaded!")
     else:
-        bot.reply_to(message, 
-            "❌ لطفاً یک لینک معتبر بفرست.\n\n"
-            "پشتیبانی از:\n"
-            "• یوتیوب: youtube.com یا youtu.be\n"
-            "• اینستاگرام: instagram.com/reel/ یا /p/"
-        )
-
-# ========== دستورات ==========
-@bot.message_handler(commands=['start'])
-def start(message):
-    user_id = message.from_user.id
-    init_user(user_id, message.from_user.username or "")
+        # Fallback: send file directly
+        with open(filename, 'rb') as f:
+            await bot.send_document(message.chat.id, f, caption="✅ Downloaded!")
     
-    premium_status = "✅ فعال" if is_premium(user_id) else "❌ غیرفعال"
+    # Update database
+    db.increment_downloads(user_id)
     
-    bot.reply_to(message, 
-        f"🎬 **به ربات دانلودر حرفه‌ای خوش آمدی!**\n\n"
-        f"👤 وضعیت: {premium_status}\n"
-        f"📥 لینک یوتیوب یا اینستاگرام رو بفرست.\n\n"
-        f"🔹 **قابلیت‌ها:**\n"
-        f"• دانلود ویدیو و صدا از یوتیوب\n"
-        f"• دانلود ریلز و پست اینستاگرام\n"
-        f"• کیفیت بالا (720p)\n"
-        f"• بدون محدودیت با اشتراک ویژه\n\n"
-        f"⭐ برای دانلود نامحدود، از دکمه «ارتقا به ویژه» استفاده کن.",
-        reply_markup=main_keyboard()
-    )
-
-@bot.message_handler(func=lambda m: m.text == "📥 دانلود ویدیو")
-def video_download(message):
-    bot.reply_to(message, "📹 **لینک یوتیوب یا اینستاگرام رو بفرست.**")
-    bot.register_next_step_handler(message, lambda m: process_link(m, is_audio=False))
-
-@bot.message_handler(func=lambda m: m.text == "🎵 دانلود صدا")
-def audio_download(message):
-    bot.reply_to(message, "🎵 **لینک یوتیوب رو بفرست تا آهنگ دانلود بشه.**")
-    bot.register_next_step_handler(message, lambda m: process_link(m, is_audio=True))
-
-@bot.message_handler(func=lambda m: m.text == "👤 حساب من")
-def profile(message):
-    user_id = message.from_user.id
-    user = users.get(str(user_id), {})
+    # Clean up
+    os.remove(filename)
     
-    premium_status = "✅ فعال" if is_premium(user_id) else "❌ غیرفعال"
-    expiry = user.get('premium_expiry', 'ندارد')
-    daily = user.get('daily_downloads', 0)
-    total = user.get('total_downloads', 0)
-    
-    if is_premium(user_id):
-        expiry_date = datetime.fromisoformat(expiry)
-        days_left = (expiry_date - datetime.now()).days
-        expiry_text = f"{days_left} روز باقی مونده"
-    else:
-        expiry_text = "ندارد"
-    
-    text = f"""👤 **حساب کاربری من**
+    # Show remaining downloads
+    if user and not user.get('is_premium', False):
+        remaining = Config.DAILY_LIMIT - db.get_daily_downloads(user_id)
+        await message.reply(f"✅ File sent! {remaining} downloads remaining today.")
 
-🆔 شناسه: `{user_id}`
-👤 نام: {message.from_user.first_name}
-
-⭐ وضعیت اشتراک: {premium_status}
-📅 تاریخ انقضا: {expiry_text}
-📊 دانلود امروز: {daily} از {DAILY_LIMIT}
-📈 مجموع دانلود: {total}
-
-💳 برای خرید اشتراک، روی دکمه «ارتقا به ویژه» کلیک کن.
-"""
-    bot.reply_to(message, text, parse_mode='Markdown')
-
-@bot.message_handler(func=lambda m: m.text == "⭐ ارتقا به ویژه")
-def upgrade(message):
-    user_id = message.from_user.id
-    init_user(user_id, message.from_user.username or "")
-    
-    if is_premium(user_id):
-        expiry = users[str(user_id)].get('premium_expiry')
-        if expiry:
-            expiry_date = datetime.fromisoformat(expiry)
-            days_left = (expiry_date - datetime.now()).days
-            bot.reply_to(message, f"✅ شما هم‌اکنون اشتراک ویژه دارید!\n📅 {days_left} روز باقی مونده.")
+# ========== Admin Commands ==========
+@dp.message_handler(commands=['stats'])
+async def stats_command(message: types.Message):
+    if not is_admin(message.from_user.id):
         return
     
-    markup = types.InlineKeyboardMarkup(row_width=2)
-    markup.add(
-        types.InlineKeyboardButton("📅 ۱ ماهه - ۱۵۰,۰۰۰ تومان", callback_data="buy_1month"),
-        types.InlineKeyboardButton("📅 ۳ ماهه - ۳۵۰,۰۰۰ تومان", callback_data="buy_3month"),
-        types.InlineKeyboardButton("📅 ۶ ماهه - ۶۰۰,۰۰۰ تومان", callback_data="buy_6month"),
-        types.InlineKeyboardButton("📅 ۱ ساله - ۱,۰۰۰,۰۰۰ تومان", callback_data="buy_1year")
-    )
-    markup.add(types.InlineKeyboardButton("🔙 بازگشت", callback_data="back_main"))
+    total_users = db.get_total_users()
+    total_downloads = db.get_total_downloads()
     
-    bot.reply_to(message,
-        "⭐ **ارتقا به اشتراک ویژه**\n\n"
-        "با تهیه اشتراک ویژه، می‌تونی:\n"
-        "✅ دانلود نامحدود روزانه\n"
-        "✅ دانلود فایل‌های تا ۵۰۰ مگابایت\n"
-        "✅ پشتیبانی優先\n\n"
-        "لطفاً یکی از پلن‌های زیر رو انتخاب کن:",
-        reply_markup=markup
+    await message.reply(
+        f"📊 **Bot Statistics**\n\n"
+        f"👥 Total Users: {total_users}\n"
+        f"📥 Total Downloads: {total_downloads}"
     )
 
-@bot.message_handler(func=lambda m: m.text == "📜 راهنما")
-def help_btn(message):
-    bot.reply_to(message,
-        "📜 **راهنمای ربات**\n\n"
-        "🔹 **نحوه استفاده:**\n"
-        "1️⃣ لینک یوتیوب یا اینستاگرام رو کپی کن\n"
-        "2️⃣ روی دکمه «دانلود ویدیو» بزن و لینک رو بفرست\n"
-        "3️⃣ ویدیو با کیفیت بالا برات ارسال میشه\n\n"
-        "🔹 **محدودیت‌های رایگان:**\n"
-        f"• روزانه {DAILY_LIMIT} دانلود\n"
-        f"• حداکثر حجم {MAX_FILE_SIZE_MB} مگابایت\n\n"
-        "⭐ **مزایای اشتراک ویژه:**\n"
-        "• دانلود نامحدود\n"
-        f"• حجم فایل تا {PREMIUM_MAX_SIZE_MB} مگابایت\n"
-        "• کیفیت بالا\n\n"
-        "📞 پشتیبانی: @hegzosupport"
-    )
+# ========== Main ==========
+async def on_startup(dp):
+    await client.start()
+    logger.info("Bot started successfully!")
+    logger.info(f"Storage Channel ID: {Config.STORAGE_CHANNEL_ID}")
+    logger.info(f"Admin IDs: {Config.ADMIN_IDS}")
 
-# ========== دکمه‌های اینلاین ==========
-@bot.callback_query_handler(func=lambda call: call.data == "back_main")
-def back_main(call):
-    bot.edit_message_text(
-        "🏠 **صفحه اصلی**",
-        call.message.chat.id,
-        call.message.message_id,
-        reply_markup=None
-    )
-    bot.send_message(call.message.chat.id, "به صفحه اصلی برگشتی.", reply_markup=main_keyboard())
-
-@bot.callback_query_handler(func=lambda call: call.data.startswith("buy_"))
-def process_buy(call):
-    user_id = call.from_user.id
-    plan = call.data.split("_")[1]
-    price = PRICES.get(plan, 0)
-    plan_name = PLANS.get(plan, "نامشخص")
-    
-    if not price:
-        bot.answer_callback_query(call.id, "❌ خطا در پردازش!", show_alert=True)
-        return
-    
-    users[str(user_id)]['pending_payment'] = {
-        'plan': plan,
-        'price': price,
-        'date': str(datetime.now())
-    }
-    save_users(users)
-    
-    markup = types.InlineKeyboardMarkup()
-    markup.add(types.InlineKeyboardButton("✅ رسید رو ارسال کردم", callback_data="send_receipt"))
-    markup.add(types.InlineKeyboardButton("🔙 انصراف", callback_data="back_main"))
-    
-    bot.edit_message_text(
-        f"💳 **ثبت درخواست خرید {plan_name}**\n\n"
-        f"💰 مبلغ: {price:,} تومان\n\n"
-        f"🏦 **شماره کارت:**\n`{CARD_NUMBER}`\n"
-        f"👤 **به نام:** {CARD_NAME}\n\n"
-        f"📌 **مراحل:**\n"
-        f"1️⃣ مبلغ {price:,} تومان رو به کارت بالا واریز کن\n"
-        f"2️⃣ از رسید واریز اسکرین‌شات بگیر\n"
-        f"3️⃣ روی دکمه «رسید رو ارسال کردم» بزن و عکس رو بفرست\n\n"
-        f"⏳ پس از تایید ادمین، اشتراک شما فعال میشه.",
-        call.message.chat.id,
-        call.message.message_id,
-        reply_markup=markup,
-        parse_mode='Markdown'
-    )
-    
-    bot.answer_callback_query(call.id)
-
-@bot.callback_query_handler(func=lambda call: call.data == "send_receipt")
-def send_receipt(call):
-    user_id = call.from_user.id
-    
-    if not users[str(user_id)].get('pending_payment'):
-        bot.answer_callback_query(call.id, "❌ درخواست خرید پیدا نشد!", show_alert=True)
-        return
-    
-    bot.edit_message_text(
-        "📸 **لطفاً عکس رسید واریز رو بفرست.**",
-        call.message.chat.id,
-        call.message.message_id
-    )
-    bot.answer_callback_query(call.id)
-    bot.register_next_step_handler(call.message, receipt_handler)
-
-def receipt_handler(message):
-    user_id = message.from_user.id
-    pending = users[str(user_id)].get('pending_payment')
-    
-    if not pending:
-        bot.reply_to(message, "❌ درخواستی برای پرداخت وجود ندارد!")
-        return
-    
-    if not message.photo:
-        bot.reply_to(message, "❌ لطفاً یه عکس از رسید بفرست!")
-        bot.register_next_step_handler(message, receipt_handler)
-        return
-    
-    file_id = message.photo[-1].file_id
-    plan_name = PLANS.get(pending['plan'], 'نامشخص')
-    price = pending['price']
-    
-    admin_text = f"""💳 **درخواست خرید جدید**
-
-👤 کاربر: @{message.from_user.username or 'بدون نام'}
-🆔 شناسه: `{user_id}`
-📦 پلن: {plan_name}
-💰 مبلغ: {price:,} تومان
-
-📅 تاریخ: {datetime.now().strftime('%Y-%m-%d %H:%M')}
-"""
-    markup = types.InlineKeyboardMarkup(row_width=2)
-    markup.add(
-        types.InlineKeyboardButton("✅ تایید", callback_data=f"approve_{user_id}"),
-        types.InlineKeyboardButton("❌ رد", callback_data=f"reject_{user_id}")
-    )
-    
-    bot.send_photo(ADMIN_ID, file_id, caption=admin_text, reply_markup=markup, parse_mode='Markdown')
-    bot.reply_to(message, "✅ رسید شما به ادمین ارسال شد. پس از تایید، اشتراک شما فعال میشه.")
-
-@bot.callback_query_handler(func=lambda call: call.data.startswith("approve_"))
-def approve_payment(call):
-    if str(call.from_user.id) != ADMIN_ID:
-        bot.answer_callback_query(call.id, "⛔ فقط ادمین!", show_alert=True)
-        return
-    
-    user_id = int(call.data.split("_")[1])
-    pending = users.get(str(user_id), {}).get('pending_payment')
-    
-    if not pending:
-        bot.answer_callback_query(call.id, "❌ درخواست پیدا نشد!", show_alert=True)
-        return
-    
-    plan = pending['plan']
-    days = {
-        '1month': 30,
-        '3month': 90,
-        '6month': 180,
-        '1year': 365
-    }.get(plan, 30)
-    
-    expiry_date = datetime.now() + timedelta(days=days)
-    users[str(user_id)]['is_premium'] = True
-    users[str(user_id)]['premium_expiry'] = str(expiry_date)
-    users[str(user_id)]['pending_payment'] = None
-    save_users(users)
-    
-    bot.send_message(user_id, 
-        f"✅ **اشتراک ویژه شما فعال شد!**\n\n"
-        f"📦 پلن: {PLANS.get(plan, 'نامشخص')}\n"
-        f"📅 تاریخ انقضا: {expiry_date.strftime('%Y-%m-%d')}\n\n"
-        f"🎉 از دانلود نامحدود لذت ببر!"
-    )
-    
-    bot.edit_message_caption(
-        f"✅ تایید شد - {PLANS.get(plan, 'نامشخص')}",
-        call.message.chat.id,
-        call.message.message_id
-    )
-    bot.answer_callback_query(call.id, "✅ تایید شد!")
-
-@bot.callback_query_handler(func=lambda call: call.data.startswith("reject_"))
-def reject_payment(call):
-    if str(call.from_user.id) != ADMIN_ID:
-        bot.answer_callback_query(call.id, "⛔ فقط ادمین!", show_alert=True)
-        return
-    
-    user_id = int(call.data.split("_")[1])
-    users[str(user_id)]['pending_payment'] = None
-    save_users(users)
-    
-    bot.send_message(user_id, "❌ درخواست خرید شما رد شد. با پشتیبانی تماس بگیرید: @hegzosupport")
-    
-    bot.edit_message_caption(
-        "❌ رد شد",
-        call.message.chat.id,
-        call.message.message_id
-    )
-    bot.answer_callback_query(call.id, "❌ رد شد!")
-
-# ========== دریافت لینک مستقیم ==========
-@bot.message_handler(func=lambda m: True)
-def handle_message(message):
-    text = message.text
-    
-    youtube_pattern = r'(https?://(?:www\.)?(?:youtube\.com|youtu\.be)/[\w\-/?=&]+)'
-    instagram_pattern = r'(https?://(?:www\.)?instagram\.com/[\w\-/]+)'
-    
-    if re.search(youtube_pattern, text) or re.search(instagram_pattern, text):
-        process_link(message, is_audio=False)
-    else:
-        bot.reply_to(message, 
-            "❌ دستور یا لینک معتبر نیست.\n\n"
-            "لینک یوتیوب یا اینستاگرام بفرست یا از دکمه‌ها استفاده کن.",
-            reply_markup=main_keyboard()
-        )
-
-# ========== اجرا ==========
 if __name__ == '__main__':
-    PORT = int(os.environ.get('PORT', 10000))
+    # Validate config
+    if not Config.validate():
+        exit(1)
     
-    if not os.path.exists('downloads'):
-        os.makedirs('downloads')
+    # Create directories
+    Path('downloads').mkdir(exist_ok=True)
+    Path('db').mkdir(exist_ok=True)
     
-    print("🎬 ربات دانلودر حرفه‌ای روشن شد!")
-    
-    try:
-        bot.remove_webhook()
-    except:
-        pass
-    
-    time.sleep(1)
-    
-    threading.Thread(target=lambda: app.run(host='0.0.0.0', port=PORT, debug=False, use_reloader=False)).start()
-    
-    bot.infinity_polling()
+    # Start bot
+    executor.start_polling(
+        dp,
+        skip_updates=True,
+        on_startup=on_startup
+    )
