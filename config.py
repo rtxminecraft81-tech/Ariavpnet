@@ -108,18 +108,20 @@ def main_keyboard():
     markup.add("🛒 خرید فیلترشکن پرسرعت", "📜 راهنما")
     return markup
 
-# ========== تابع دانلود ==========
+# ========== تابع دانلود با کوکی ==========
 def download_media(link, is_audio=False):
     try:
         if not os.path.exists('downloads'):
             os.makedirs('downloads')
         
+        # ========== تنظیمات yt-dlp با کوکی ==========
         ydl_opts = {
             'outtmpl': 'downloads/%(title)s_%(id)s.%(ext)s',
             'quiet': True,
             'no_warnings': True,
             'ignoreerrors': True,
             'no_check_certificate': True,
+            'cookiefile': 'cookies.txt',  # <-- کوکی برای یوتیوب و اینستاگرام
             'format': 'bestvideo[height<=720]+bestaudio/best[height<=720]' if not is_audio else 'bestaudio/best',
             'merge_output_format': 'mp4',
             'postprocessors': [{
@@ -135,7 +137,11 @@ def download_media(link, is_audio=False):
             },
             'nocheckcertificate': True,
             'geo_bypass': True,
-            'cookiefile': None,
+            'extractor_args': {
+                'youtube': {
+                    'skip': ['hls', 'dash'],
+                }
+            }
         }
         
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
@@ -157,7 +163,6 @@ def download_media(link, is_audio=False):
 # ========== ارسال فایل ==========
 def send_file(message, filename, user_id):
     if not filename or not os.path.exists(filename):
-        # ========== پیام خطای دانلود ناموفق ==========
         bot.reply_to(message, 
             "❌ **دانلود ناموفق!**\n\n"
             "📌 برای دانلود از ربات‌های زیر استفاده کنید:\n"
@@ -276,7 +281,6 @@ def upgrade(message):
         reply_markup=markup
     )
 
-# ========== دکمه خرید فیلترشکن پرسرعت ==========
 @bot.message_handler(func=lambda m: m.text == "🛒 خرید فیلترشکن پرسرعت")
 def buy_vpn(message):
     bot.reply_to(message,
@@ -366,7 +370,7 @@ if __name__ == '__main__':
     if not os.path.exists('downloads'):
         os.makedirs('downloads')
     
-    print("🤖 ربات چندمنظوره روشن شد!")
+    print("🤖 ربات چندمنظوره با پشتیبانی از کوکی روشن شد!")
     
     try:
         bot.remove_webhook()
