@@ -208,7 +208,7 @@ def download_instagram(link):
     except Exception as e:
         return None, f"❌ خطا: {str(e)[:80]}"
 
-# ========== تابع ارسال فایل ==========
+# ========== تابع ارسال فایل (با لینک مستقیم برای فایل‌های بزرگ) ==========
 def send_file(message, filename, result, user_id):
     if filename and os.path.exists(filename):
         try:
@@ -223,8 +223,8 @@ def send_file(message, filename, result, user_id):
                 os.remove(filename)
                 return
             
-            # اگه فایل بزرگتر از ۵۰ مگابایت بود، لینک دانلود بفرست
-            if file_size > 50:
+            # ======== فایل‌های بزرگتر از ۲۰ مگابایت ========
+            if file_size > 20:
                 file_name = os.path.basename(filename)
                 download_link = f"{BASE_URL}/download/{file_name}"
                 
@@ -245,14 +245,14 @@ def send_file(message, filename, result, user_id):
                 increment_download(user_id)
                 return
             
-            # فایل‌های کوچک‌تر از ۵۰ مگابایت مستقیم توی تلگرام
+            # ======== فایل‌های کوچک‌تر از ۲۰ مگابایت ========
             with open(filename, 'rb') as f:
                 if filename.endswith('.mp4'):
-                    bot.send_video(message.chat.id, f, caption=result, supports_streaming=True)
+                    bot.send_video(message.chat.id, f, caption=result, supports_streaming=True, timeout=600)
                 elif filename.endswith('.mp3'):
-                    bot.send_audio(message.chat.id, f, caption=result)
+                    bot.send_audio(message.chat.id, f, caption=result, timeout=600)
                 else:
-                    bot.send_document(message.chat.id, f, caption=result)
+                    bot.send_document(message.chat.id, f, caption=result, timeout=600)
             
             os.remove(filename)
             
@@ -265,9 +265,27 @@ def send_file(message, filename, result, user_id):
                 bot.reply_to(message, "✅ فایل با موفقیت ارسال شد! (اشتراک ویژه)")
             
         except Exception as e:
-            bot.reply_to(message, f"❌ خطا در ارسال: {str(e)[:80]}")
-            if os.path.exists(filename):
-                os.remove(filename)
+            error_msg = str(e)
+            if "Timeout" in error_msg or "timed out" in error_msg:
+                if os.path.exists(filename):
+                    file_name = os.path.basename(filename)
+                    download_link = f"{BASE_URL}/download/{file_name}"
+                    bot.reply_to(message, 
+                        f"⚠️ **ارسال فایل با خطا مواجه شد!**\n\n"
+                        f"📥 فایل رو می‌تونی از طریق لینک زیر دانلود کنی:\n"
+                        f"`{download_link}`",
+                        parse_mode='Markdown'
+                    )
+                    def delete_later():
+                        time.sleep(3600)
+                        if os.path.exists(filename):
+                            os.remove(filename)
+                    threading.Thread(target=delete_later).start()
+                    return
+            else:
+                bot.reply_to(message, f"❌ خطا در ارسال: {str(e)[:80]}")
+                if os.path.exists(filename):
+                    os.remove(filename)
     else:
         bot.reply_to(message, result)
 
