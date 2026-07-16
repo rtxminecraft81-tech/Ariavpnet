@@ -1,420 +1,483 @@
-import telebot
-from telebot import types
+import asyncio
+import html
+import logging
 import os
-import re
-import yt_dlp
-import time
-from flask import Flask, send_file
 import threading
-from datetime import datetime, timedelta
-import json
+import time
+from typing import Any, Dict, Optional
 
-app = Flask(__name__)
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram.constants import ChatType
+from telegram.error import Conflict, TelegramError
+from telegram.ext import (
+    Application,
+    BaseHandler,
+    CallbackQueryHandler,
+    CommandHandler,
+    ContextTypes,
+    MessageHandler,
+    filters,
+)
 
-@app.route('/')
-def home():
-    return "🤖 Downloader Bot is running!", 200
+from config import (
+    ALLOWED_CHAT_IDS,
+    ALLOW_PRIVATE_CHAT,
+    BOT_TOKEN,
+    ENABLE_TIKTOK_DOWNLOAD,
+    LOG_LINK_ACTIVITY,
+    MIRROR_HOST,
+    RESTART_ON_STOP,
+)
+from link_mirror import replace_instagram_hosts
+from tiktok_downloader import TikTokDownloader
+from tiktok_urls import extract_tiktok_urls
 
-@app.route('/download/<filename>')
-def download_file(filename):
-    file_path = os.path.join('downloads', filename)
-    if os.path.exists(file_path):
-        return send_file(file_path, as_attachment=True)
-    return "File not found!", 404
+logging.basicConfig(
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+    level=logging.INFO,
+)
+logger = logging.getLogger(__name__)
 
-TOKEN = os.environ.get('BOT_TOKEN')
-if not TOKEN:
-    raise ValueError("❌ توکن یافت نشد!")
+# ============ تنظیمات عضویت اجباری ============
+FORCE_CHANNEL_ID = "@hegzo_vpn_channle"  # آیدی کانال
+FORCE_CHANNEL_LINK = "https://t.me/hegzo_vpn_channle"  # لینک کانال
+# ===========================================
 
-bot = telebot.TeleBot(TOKEN)
+def _forum_topic_api_kwargs(message_thread_id: Optional[int]) -> Optional[Dict[str, Any]]:
+    if message_thread_id is None:
+        return None
+    return {"message_thread_id": message_thread_id}
 
-# ========== تنظیمات ==========
-ADMIN_ID = int(os.environ.get('ADMIN_ID', '6795169616'))
-BASE_URL = os.environ.get('BASE_URL', 'https://ariavpnet.onrender.com')
-USER_DB = 'users.json'
-DAILY_LIMIT = 5
-MAX_FILE_SIZE_MB = 50
-PREMIUM_MAX_SIZE_MB = 500
+class EditedPlainTextHandler(BaseHandler):
+    def __init__(self, callback):
+        super().__init__(callback)
 
-# ========== دیتابیس ساده ==========
-def load_users():
-    if os.path.exists(USER_DB):
-        with open(USER_DB, 'r') as f:
-            return json.load(f)
-    return {}
-
-def save_users(users):
-    with open(USER_DB, 'w') as f:
-        json.dump(users, f, indent=4)
-
-def init_user(user_id, username=""):
-    users = load_users()
-    if str(user_id) not in users:
-        users[str(user_id)] = {
-            'username': username,
-            'joined_at': str(datetime.now()),
-            'is_premium': False,
-            'premium_expiry': None,
-            'daily_downloads': 0,
-            'last_download_date': str(datetime.now().date()),
-            'total_downloads': 0
-        }
-        save_users(users)
-    return users
-
-def is_premium(user_id):
-    users = load_users()
-    user = users.get(str(user_id), {})
-    if not user.get('is_premium', False):
-        return False
-    expiry = user.get('premium_expiry')
-    if expiry:
-        expiry_date = datetime.fromisoformat(expiry)
-        if datetime.now() > expiry_date:
-            users[str(user_id)]['is_premium'] = False
-            save_users(users)
+    def check_update(self, update: Update) -> bool:
+        msg = update.edited_message
+        if not msg:
             return False
-    return True
+        body = (msg.text or msg.caption or "").strip()
+        return bool(body) and not body.startswith("/")
 
-def can_download(user_id):
-    users = load_users()
-    user = users.get(str(user_id), {})
-    if is_premium(user_id):
-        return True, "✅ اشتراک ویژه"
-    
-    today = str(datetime.now().date())
-    if user.get('last_download_date') != today:
-        users[str(user_id)]['daily_downloads'] = 0
-        users[str(user_id)]['last_download_date'] = today
-        save_users(users)
-    
-    if user.get('daily_downloads', 0) >= DAILY_LIMIT:
-        return False, f"❌ محدودیت روزانه ({DAILY_LIMIT}) تمام شد!"
-    
-    return True, f"✅ {DAILY_LIMIT - user.get('daily_downloads', 0)} دانلود مونده"
+class SocialLinksBot:
+    def __init__(self):
+        self.mirror_host = MIRROR_HOST
+        self._allowed_chat_ids = ALLOWED_CHAT_IDS
+        self.downloader = TikTokDownloader() if ENABLE_TIKTOK_DOWNLOAD else None
+        self.application = Application.builder().token(BOT_TOKEN).build()
+        self._register_handlers()
 
-def increment_download(user_id):
-    users = load_users()
-    if not is_premium(user_id):
-        users[str(user_id)]['daily_downloads'] = users[str(user_id)].get('daily_downloads', 0) + 1
-        users[str(user_id)]['total_downloads'] = users[str(user_id)].get('total_downloads', 0) + 1
-        save_users(users)
+    def _register_handlers(self) -> None:
+        self.application.add_handler(CommandHandler("chatid", self.cmd_chatid))
+        self.application.add_handler(CommandHandler("start", self.cmd_start))
+        self.application.add_handler(CommandHandler("help", self.cmd_help))
+        self.application.add_handler(CallbackQueryHandler(self.handle_callback, pattern="check_subscription"))
 
-# ========== کیبورد اصلی ==========
-def main_keyboard():
-    markup = types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
-    markup.add("📥 دانلود", "🛒 خرید کانفیگ")
-    markup.add("👤 حساب من", "⭐ ارتقا به ویژه")
-    markup.add("📜 راهنما")
-    return markup
+        async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
+            await self._handle_incoming(update, context)
 
-# ========== تابع دانلود اینستاگرام و تیک‌تاک ==========
-def download_media(link):
-    try:
-        if not os.path.exists('downloads'):
-            os.makedirs('downloads')
-        
-        ydl_opts = {
-            'outtmpl': 'downloads/%(title)s_%(id)s.%(ext)s',
-            'quiet': True,
-            'no_warnings': True,
-            'ignoreerrors': True,
-            'no_check_certificate': True,
-            'format': 'best',
-            'merge_output_format': 'mp4',
-            'headers': {
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-            },
-            'nocheckcertificate': True,
-            'geo_bypass': True,
-        }
-        
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            info = ydl.extract_info(link, download=True)
-            if info:
-                filename = ydl.prepare_filename(info)
-                if not os.path.exists(filename):
-                    for f in os.listdir('downloads'):
-                        if info.get('id') and info['id'] in f:
-                            return os.path.join('downloads', f)
-                return filename
-        
-        return None
-        
-    except Exception as e:
-        print(f"Download error: {e}")
-        return None
+        msg_filter = (filters.TEXT | filters.CAPTION) & ~filters.COMMAND
+        self.application.add_handler(MessageHandler(msg_filter, handle_text))
+        self.application.add_handler(EditedPlainTextHandler(handle_text))
+        self.application.add_error_handler(self.error_handler)
 
-# ========== ارسال فایل ==========
-def send_file(message, filename, user_id):
-    if not filename or not os.path.exists(filename):
-        bot.reply_to(message, 
-            "❌ **دانلود ناموفق!**\n\n"
-            "📌 برای دانلود از ربات‌های زیر استفاده کنید:\n"
-            "🔹 @aria_bot_channle\n\n"
-            "🛒 یا از بخش «خرید کانفیگ» استفاده کنید.",
-            parse_mode='Markdown'
-        )
-        return
-    
-    try:
-        file_size = os.path.getsize(filename) / (1024 * 1024)
-        max_size = PREMIUM_MAX_SIZE_MB if is_premium(user_id) else MAX_FILE_SIZE_MB
-        
-        if file_size > max_size:
-            bot.reply_to(message, 
-                f"⚠️ حجم فایل {file_size:.1f}MB از حد مجاز ({max_size}MB) بیشتره!\n\n"
-                f"📌 برای دانلود فایل‌های بزرگتر از ربات‌های زیر استفاده کنید:\n"
-                f"🔹 @aria_bot_channle\n\n"
-                f"🛒 یا از بخش «خرید کانفیگ» استفاده کنید."
-            )
-            if os.path.exists(filename):
-                os.remove(filename)
-            return
-        
-        if file_size > 20:
-            file_name = os.path.basename(filename)
-            download_link = f"{BASE_URL}/download/{file_name}"
-            bot.reply_to(message, 
-                f"📥 **فایل آماده دانلود است!**\n\n"
-                f"📁 حجم: {file_size:.1f} MB\n"
-                f"🔗 [لینک دانلود]({download_link})",
-                parse_mode='Markdown'
-            )
-            threading.Thread(target=lambda: (time.sleep(3600), os.remove(filename) if os.path.exists(filename) else None)).start()
-        else:
-            with open(filename, 'rb') as f:
-                if filename.endswith('.mp4'):
-                    bot.send_video(message.chat.id, f, caption="✅ دانلود شد!", supports_streaming=True)
-                elif filename.endswith('.mp3'):
-                    bot.send_audio(message.chat.id, f, caption="✅ دانلود شد!")
-                else:
-                    bot.send_document(message.chat.id, f, caption="✅ دانلود شد!")
-            os.remove(filename)
-        
-        increment_download(user_id)
-        
-    except Exception as e:
-        bot.reply_to(message, 
-            f"❌ **خطا در ارسال!**\n\n"
-            f"📌 برای دانلود از ربات‌های زیر استفاده کنید:\n"
-            f"🔹 @aria_bot_channle\n\n"
-            f"🛒 یا از بخش «خرید کانفیگ» استفاده کنید."
-        )
-        if os.path.exists(filename):
-            os.remove(filename)
+    def _chat_is_allowed(self, chat) -> bool:
+        if self._allowed_chat_ids is None:
+            return True
+        if ALLOW_PRIVATE_CHAT and chat.type == ChatType.PRIVATE:
+            return True
+        return chat.id in self._allowed_chat_ids
 
-# ========== دستورات ادمین ==========
-@bot.message_handler(commands=['pin'])
-def pin_message(message):
-    user_id = message.from_user.id
-    if user_id != ADMIN_ID:
-        bot.reply_to(message, "⛔ فقط ادمین می‌تونه از این دستور استفاده کنه!")
-        return
-    
-    if message.reply_to_message:
+    # ============ تابع چک کردن عضویت ============
+    async def is_subscribed(self, user_id: int) -> bool:
+        """بررسی میکنه کاربر عضو کاناله یا نه"""
         try:
-            bot.pin_chat_message(message.chat.id, message.reply_to_message.message_id)
-            bot.reply_to(message, "✅ پیام با موفقیت پین شد!")
+            member = await self.application.bot.get_chat_member(
+                chat_id=FORCE_CHANNEL_ID,
+                user_id=user_id
+            )
+            return member.status in ["member", "administrator", "creator"]
         except Exception as e:
-            bot.reply_to(message, f"❌ خطا در پین کردن: {str(e)}")
-    else:
-        bot.reply_to(message, "❌ لطفاً روی پیامی که می‌خوای پین کنی ریپلای بزن و دوباره /pin رو بفرست.")
+            logger.error(f"Error checking subscription: {e}")
+            return False
+    # ==========================================
 
-@bot.message_handler(commands=['broadcast'])
-def broadcast_command(message):
-    user_id = message.from_user.id
-    if user_id != ADMIN_ID:
-        bot.reply_to(message, "⛔ فقط ادمین می‌تونه از این دستور استفاده کنه!")
-        return
-    
-    bot.reply_to(message, "📢 **لطفاً پیام خود را بفرستید.**")
-    bot.register_next_step_handler(message, broadcast_send)
+    async def force_subscribe(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """پیام عضویت اجباری رو نمایش میده"""
+        user = update.effective_user
+        if not user:
+            return
 
-def broadcast_send(message):
-    user_id = message.from_user.id
-    if user_id != ADMIN_ID:
-        return
-    
-    msg = message.text
-    if not msg:
-        bot.reply_to(message, "❌ لطفاً یک پیام متنی بفرست.")
-        return
-    
-    users = load_users()
-    success = 0
-    fail = 0
-    
-    bot.reply_to(message, f"⏳ در حال ارسال به {len(users)} کاربر...")
-    
-    for uid in users.keys():
+        keyboard = InlineKeyboardMarkup([
+            [InlineKeyboardButton("📢 عضویت در کانال", url=FORCE_CHANNEL_LINK)],
+            [InlineKeyboardButton("✅ تایید عضویت", callback_data="check_subscription")]
+        ])
+
+        text = (
+            f"👋 سلام {user.first_name} عزیز!\n\n"
+            f"برای استفاده از ربات، ابتدا باید در کانال زیر عضو شوید:\n"
+            f"👉 {FORCE_CHANNEL_LINK}\n\n"
+            f"پس از عضویت، دکمه «تایید عضویت» را بزنید."
+        )
+
+        await update.message.reply_text(
+            text=text,
+            reply_markup=keyboard,
+            parse_mode="HTML"
+        )
+
+    async def handle_callback(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """مدیریت دکمه تایید عضویت"""
+        query = update.callback_query
+        await query.answer()
+
+        user_id = query.from_user.id
+
+        if await self.is_subscribed(user_id):
+            await query.edit_message_text(
+                text="✅ عضویت شما تایید شد! حالا می‌تونید از ربات استفاده کنید.\n\n"
+                     "لینک اینستاگرام یا تیک‌تاک رو برام بفرستید."
+            )
+        else:
+            keyboard = InlineKeyboardMarkup([
+                [InlineKeyboardButton("📢 عضویت در کانال", url=FORCE_CHANNEL_LINK)],
+                [InlineKeyboardButton("✅ تایید عضویت", callback_data="check_subscription")]
+            ])
+            await query.edit_message_text(
+                text="❌ شما هنوز عضو کانال نشدید!\n\n"
+                     "لطفا اول عضو بشید، بعد دکمه تایید رو بزنید.",
+                reply_markup=keyboard
+            )
+
+    async def cmd_chatid(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        chat = update.effective_chat
+        user = update.effective_user
+        if not chat or not update.message:
+            return
+        parts = [
+            f"<b>chat id</b>: <code>{chat.id}</code>",
+            f"<b>type</b>: <code>{html.escape(str(chat.type))}</code>",
+        ]
+        if getattr(chat, "title", None):
+            parts.append(f"<b>title</b>: {html.escape(chat.title)}")
+        if user:
+            parts.append(f"<b>your user id</b>: <code>{user.id}</code>")
+        parts += [
+            "",
+            "Add this <b>chat id</b> to the <code>ALLOWED_CHAT_IDS</code> env variable "
+            "(comma-separated). Redeploy / restart the bot after changing it.",
+        ]
+        await update.message.reply_text("\n".join(parts), parse_mode="HTML")
+
+    async def _safe_edit_message(
+        self,
+        context: ContextTypes.DEFAULT_TYPE,
+        chat_id: int,
+        status_message_id: int,
+        message_thread_id,
+        text: str,
+    ) -> None:
         try:
-            bot.send_message(int(uid), f"📢 **پیام از طرف ادمین:**\n\n{msg}", parse_mode='Markdown')
-            success += 1
-            time.sleep(0.05)
-        except:
-            fail += 1
-    
-    bot.reply_to(message, 
-        f"✅ **برادکست انجام شد!**\n\n"
-        f"✅ موفق: {success}\n"
-        f"❌ ناموفق: {fail}"
-    )
+            await context.bot.edit_message_text(
+                chat_id=chat_id,
+                message_id=status_message_id,
+                text=text[:3900],
+                api_kwargs=_forum_topic_api_kwargs(message_thread_id),
+            )
+        except TelegramError as exc:
+            logger.warning("Could not edit status message: %s", exc)
 
-# ========== دستورات ==========
-@bot.message_handler(commands=['start'])
-def start(message):
-    user_id = message.from_user.id
-    init_user(user_id, message.from_user.username or "")
-    
-    bot.reply_to(message, 
-        f"🎬 **به ربات دانلودر خوش آمدی!**\n\n"
-        f"📥 لینک اینستاگرام یا تیک‌تاک رو بفرست.\n"
-        f"⭐ وضعیت: {'✅ ویژه' if is_premium(user_id) else '❌ رایگان'}\n\n"
-        f"🛒 برای خرید کانفیگ از دکمه زیر استفاده کن.\n"
-        f"📞 پشتیبانی: @hegzosupport",
-        reply_markup=main_keyboard()
-    )
+    async def cmd_start(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        if not self._chat_is_allowed(update.effective_chat):
+            return
 
-@bot.message_handler(func=lambda m: m.text == "📥 دانلود")
-def video_cmd(message):
-    bot.reply_to(message, "📹 **لینک اینستاگرام یا تیک‌تاک رو بفرست.**")
-    bot.register_next_step_handler(message, lambda m: process_link(m))
+        # ============ چک کردن عضویت ============
+        user = update.effective_user
+        if user and not await self.is_subscribed(user.id):
+            await self.force_subscribe(update, context)
+            return
+        # ======================================
 
-@bot.message_handler(func=lambda m: m.text == "🛒 خرید کانفیگ")
-def buy_config(message):
-    bot.reply_to(message,
-        "🔹 **برای خرید کانفیگ از ربات زیر استفاده کنید:**\n\n"
-        "🤖 @hegzo_vpn_bot\n\n"
-        "📌 این ربات بهترین کانفیگ‌های VPN رو با کیفیت بالا ارائه میده.\n"
-        "💳 پرداخت آسان و پشتیبانی ۲۴ ساعته.\n\n"
-        "📞 پشتیبانی: @hegzosupport"
-    )
-
-@bot.message_handler(func=lambda m: m.text == "👤 حساب من")
-def profile(message):
-    user_id = message.from_user.id
-    users = load_users()
-    user = users.get(str(user_id), {})
-    
-    text = f"""👤 **حساب من**
-
-🆔 ID: `{user_id}`
-⭐ وضعیت: {'✅ ویژه' if is_premium(user_id) else '❌ رایگان'}
-📊 دانلود امروز: {user.get('daily_downloads', 0)}/{DAILY_LIMIT}
-📈 مجموع: {user.get('total_downloads', 0)}
-"""
-    bot.reply_to(message, text, parse_mode='Markdown')
-
-@bot.message_handler(func=lambda m: m.text == "⭐ ارتقا به ویژه")
-def upgrade(message):
-    user_id = message.from_user.id
-    if is_premium(user_id):
-        bot.reply_to(message, "✅ شما هم‌اکنون ویژه هستید!")
-        return
-    
-    markup = types.InlineKeyboardMarkup(row_width=1)
-    markup.add(
-        types.InlineKeyboardButton("📅 ۱ ماهه - ۱۵۰,۰۰۰ تومان", callback_data="buy_1month"),
-        types.InlineKeyboardButton("📅 ۳ ماهه - ۳۵۰,۰۰۰ تومان", callback_data="buy_3month"),
-        types.InlineKeyboardButton("📅 ۶ ماهه - ۶۰۰,۰۰۰ تومان", callback_data="buy_6month")
-    )
-    bot.reply_to(message, 
-        "⭐ **خرید اشتراک ویژه**\n\n"
-        "مزایا:\n"
-        "✅ دانلود نامحدود\n"
-        "✅ فایل تا ۵۰۰MB\n"
-        "✅ اولویت پشتیبانی",
-        reply_markup=markup
-    )
-
-@bot.message_handler(func=lambda m: m.text == "📜 راهنما")
-def help_cmd(message):
-    bot.reply_to(message,
-        "📜 **راهنما**\n\n"
-        "🔹 لینک اینستاگرام یا تیک‌تاک رو بفرست.\n"
-        "🔹 دانلود خودکار انجام میشه.\n\n"
-        "📌 برای دانلود بیشتر از ربات‌های زیر استفاده کنید:\n"
-        "🔹 @aria_bot_channle\n\n"
-        "🛒 خرید کانفیگ: @hegzo_vpn_bot\n"
-        "📞 پشتیبانی: @hegzosupport"
-    )
-
-@bot.callback_query_handler(func=lambda call: call.data.startswith("buy_"))
-def buy_callback(call):
-    bot.answer_callback_query(call.id, 
-        "💰 لطفاً مبلغ رو به کارت زیر واریز کن:\n\n"
-        "5022291525516892\n"
-        "احمد خزایی\n\n"
-        "و رسید رو بفرست.",
-        show_alert=True
-    )
-
-# ========== پردازش لینک ==========
-def process_link(message):
-    user_id = message.from_user.id
-    text = message.text
-    
-    can, msg = can_download(user_id)
-    if not can:
-        bot.reply_to(message, 
-            f"{msg}\n\n"
-            f"📌 برای دانلود بیشتر از ربات‌های زیر استفاده کنید:\n"
-            f"🔹 @aria_bot_channle\n\n"
-            f"🛒 یا از بخش «خرید کانفیگ» استفاده کنید."
+        host = html.escape(self.mirror_host)
+        tt = (
+            " I can also download <b>TikTok</b> videos and send the file here."
+            if ENABLE_TIKTOK_DOWNLOAD
+            else ""
         )
-        return
-    
-    pattern = r'(https?://(?:www\.)?(?:instagram\.com|tiktok\.com)/[\w\-/?=&]+)'
-    match = re.search(pattern, text)
-    
-    if not match:
-        bot.reply_to(message, 
-            "❌ **لینک معتبر نیست!**\n\n"
-            "📌 فقط لینک اینستاگرام یا تیک‌تاک پشتیبانی میشه.\n\n"
-            f"📌 برای دانلود از ربات‌های زیر استفاده کنید:\n"
-            f"🔹 @aria_bot_channle"
-        )
-        return
-    
-    link = match.group(1)
-    bot.reply_to(message, "⏳ در حال دانلود...")
-    
-    filename = download_media(link)
-    send_file(message, filename, user_id)
-
-# ========== پیام‌های عادی ==========
-@bot.message_handler(func=lambda m: True)
-def handle_all(message):
-    text = message.text
-    pattern = r'(https?://(?:www\.)?(?:instagram\.com|tiktok\.com)/[\w\-/?=&]+)'
-    if re.search(pattern, text):
-        process_link(message)
-    else:
-        bot.reply_to(message, 
-            "❌ **لینک معتبر نیست!**\n\n"
-            "📌 فقط لینک اینستاگرام یا تیک‌تاک بفرست.\n\n"
-            "📌 برای دانلود بیشتر از ربات‌های زیر استفاده کنید:\n"
-            "🔹 @aria_bot_channle\n\n"
-            "🛒 خرید کانفیگ: @hegzo_vpn_bot",
-            reply_markup=main_keyboard()
+        await update.message.reply_text(
+            "Send an Instagram post, reel, or TV link - I'll reply with the same URL on "
+            f"<b>www.{host}</b> so Telegram can show a preview.{tt}\n\n"
+            "Forum topics: replies stay in the topic. "
+            "Works in groups and DMs. Use /help.",
+            parse_mode="HTML",
         )
 
-# ========== اجرا ==========
-if __name__ == '__main__':
-    PORT = int(os.environ.get('PORT', 10000))
-    
-    if not os.path.exists('downloads'):
-        os.makedirs('downloads')
-    
-    print("🤖 ربات دانلودر اینستاگرام و تیک‌تاک روشن شد!")
-    print(f"👑 ادمین: {ADMIN_ID}")
-    
-    try:
-        bot.remove_webhook()
-    except:
-        pass
-    
-    threading.Thread(target=lambda: app.run(host='0.0.0.0', port=PORT, debug=False, use_reloader=False)).start()
-    
-    bot.infinity_polling()
+    async def cmd_help(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        if not self._chat_is_allowed(update.effective_chat):
+            return
+
+        # ============ چک کردن عضویت ============
+        user = update.effective_user
+        if user and not await self.is_subscribed(user.id):
+            await self.force_subscribe(update, context)
+            return
+        # ======================================
+
+        host = html.escape(self.mirror_host)
+        lines = [
+            "<b>Instagram</b>",
+            "Paste a link in message text <i>or</i> in a photo/video <b>caption</b>. ",
+            "I'll rewrite the host to ",
+            f"<code>www.{host}</code> (set <code>MIRROR_HOST</code>) for link previews.",
+        ]
+        if ENABLE_TIKTOK_DOWNLOAD:
+            lines += [
+                "",
+                "<b>TikTok</b>",
+                "Paste a <code>tiktok.com</code> or <code>vm.tiktok.com</code> link. "
+                "I'll download it with yt-dlp and send the video (max ~50&nbsp;MB). "
+                "Set <code>ENABLE_TIKTOK_DOWNLOAD=false</code> to turn this off.",
+            ]
+        lines += ["", "<i>Only one polling instance per bot token (local vs Railway).</i>"]
+        if self._allowed_chat_ids is not None:
+            lines += [
+                "",
+                "<b>Access</b>: Groups are limited to <code>ALLOWED_CHAT_IDS</code>. "
+                "Private chat with this bot is still allowed (set "
+                "<code>ALLOW_PRIVATE_CHAT=false</code> to disable). "
+                "Use <code>/chatid</code> to read an id.",
+            ]
+        await update.message.reply_text("\n".join(lines), parse_mode="HTML")
+
+    async def _handle_incoming(
+        self, update: Update, context: ContextTypes.DEFAULT_TYPE
+    ) -> None:
+        message = update.message or update.edited_message
+        if not message:
+            return
+        body = (message.text or message.caption or "").strip()
+        if not body:
+            return
+
+        if not self._chat_is_allowed(message.chat):
+            return
+
+        # ============ چک کردن عضویت ============
+        user = update.effective_user
+        if user and not await self.is_subscribed(user.id):
+            await self.force_subscribe(update, context)
+            return
+        # ======================================
+
+        mirror_text, mirrored = replace_instagram_hosts(body, self.mirror_host)
+        if mirrored:
+            if LOG_LINK_ACTIVITY:
+                logger.info(
+                    "Handled Instagram mirror chat_id=%s topic=%s",
+                    message.chat_id,
+                    getattr(message, "message_thread_id", None),
+                )
+            await message.reply_text(
+                mirror_text,
+                disable_web_page_preview=False,
+            )
+
+        if self.downloader:
+            for link in extract_tiktok_urls(body):
+                if self.downloader.is_valid_tiktok_url(link):
+                    if LOG_LINK_ACTIVITY:
+                        logger.info(
+                            "TikTok download start chat_id=%s host=%s…",
+                            message.chat_id,
+                            link[:48],
+                        )
+                    await self._process_tiktok(context, message, link)
+
+    async def _process_tiktok(
+        self,
+        context: ContextTypes.DEFAULT_TYPE,
+        message,
+        link: str,
+    ) -> None:
+        chat_id = message.chat_id
+        thread_id = getattr(message, "message_thread_id", None)
+
+        status = await message.reply_text(
+            text=f"⏳ Downloading TikTok…\n<code>{html.escape(link)}</code>",
+            parse_mode="HTML",
+        )
+
+        try:
+            ok, detail, media_files = await asyncio.to_thread(
+                self.downloader.download_video, link
+            )
+        except Exception as e:
+            logger.exception("TikTok download crashed: %s", e)
+            await self._safe_edit_message(
+                context,
+                chat_id,
+                status.message_id,
+                thread_id,
+                "❌ TikTok download failed unexpectedly.",
+            )
+            return
+
+        if not ok:
+            await self._safe_edit_message(
+                context,
+                chat_id,
+                status.message_id,
+                thread_id,
+                str(detail),
+            )
+            return
+
+        if not media_files:
+            await self._safe_edit_message(
+                context,
+                chat_id,
+                status.message_id,
+                thread_id,
+                "❌ Download finished but no file was produced.",
+            )
+            return
+
+        await self._safe_edit_message(
+            context,
+            chat_id,
+            status.message_id,
+            thread_id,
+            "✅ Sending video…",
+        )
+
+        try:
+            for media in media_files:
+                path = media["file_path"]
+                raw_cap = media.get("title") or ""
+                cap = html.escape(raw_cap.strip())[:1020] if raw_cap.strip() else ""
+                vid_kw = dict(
+                    chat_id=chat_id,
+                    video=path,
+                    message_thread_id=thread_id,
+                )
+                if cap:
+                    vid_kw["caption"] = cap[:1024]
+                    vid_kw["parse_mode"] = "HTML"
+                try:
+                    await context.bot.send_video(**vid_kw)
+                except TelegramError as send_err:
+                    logger.warning(
+                        "send_video failed (%s); retrying as document", send_err
+                    )
+                    doc_kw = dict(
+                        chat_id=chat_id,
+                        document=path,
+                        filename=os.path.basename(path),
+                        message_thread_id=thread_id,
+                    )
+                    if cap:
+                        doc_kw["caption"] = cap[:1024]
+                        doc_kw["parse_mode"] = "HTML"
+                    await context.bot.send_document(**doc_kw)
+                await asyncio.sleep(0.4)
+        except Exception as e:
+            logger.exception("Sending TikTok video failed: %s", e)
+            await context.bot.send_message(
+                chat_id=chat_id,
+                text=f"❌ Could not upload the video: {e}",
+                message_thread_id=thread_id,
+            )
+        finally:
+            await asyncio.to_thread(self.downloader.cleanup_files, media_files)
+            try:
+                await context.bot.delete_message(
+                    chat_id=chat_id,
+                    message_id=status.message_id,
+                    api_kwargs=_forum_topic_api_kwargs(thread_id),
+                )
+            except Exception:
+                pass
+
+    async def error_handler(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        err = context.error
+        if isinstance(err, Conflict):
+            logger.warning(
+                "Telegram Conflict: another client is polling with the same BOT_TOKEN. "
+                "Stop the duplicate (e.g. local python bot.py vs Railway)."
+            )
+            return
+        logger.error(
+            "Unhandled error while processing update",
+            exc_info=err,
+        )
+
+    def start_web_server(self) -> bool:
+        try:
+            from flask import Flask, jsonify
+
+            app = Flask(__name__)
+
+            @app.route("/health")
+            def health_check():
+                return jsonify(
+                    {
+                        "status": "healthy",
+                        "service": "social-links-bot",
+                        "mirror": self.mirror_host,
+                        "tiktok": bool(self.downloader),
+                        "timestamp": time.time(),
+                    }
+                )
+
+            @app.route("/")
+            def root():
+                return jsonify(
+                    {
+                        "status": "running",
+                        "health": "/health",
+                        "mirror": self.mirror_host,
+                        "tiktok": bool(self.downloader),
+                    }
+                )
+
+            def run_flask() -> None:
+                port = int(os.environ.get("PORT", "8000"))
+                app.run(host="0.0.0.0", port=port, debug=False, use_reloader=False)
+
+            threading.Thread(target=run_flask, daemon=True).start()
+            logger.info("Health server on port %s", os.environ.get("PORT", "8000"))
+            return True
+        except ImportError:
+            logger.warning("Flask not installed; skipping /health server")
+            return False
+        except Exception as e:
+            logger.error("Failed to start health server: %s", e)
+            return False
+
+    def run(self) -> None:
+        logger.info(
+            "Starting bot (IG mirror → %s, TikTok download=%s)",
+            self.mirror_host,
+            bool(self.downloader),
+        )
+        threading.Thread(target=self.start_web_server, daemon=True).start()
+
+        while True:
+            try:
+                self.application.run_polling(allowed_updates=Update.ALL_TYPES)
+            except Exception as e:
+                logger.error("Polling stopped: %s", e)
+
+            if RESTART_ON_STOP:
+                logger.warning("Restarting in 5 seconds...")
+                time.sleep(5)
+            else:
+                break
+
+
+def main() -> None:
+    SocialLinksBot().run()
+
+
+if __name__ == "__main__":
+    main()
